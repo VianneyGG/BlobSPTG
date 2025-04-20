@@ -3,79 +3,111 @@ import numpy as np
 from Fonctions.Pression import conductance
 
 def rayon(Conductance:float)->float:
-    """renvoie le rayon correspondant à l'conductance
+    """Calcule le rayon correspondant à une conductance donnée. Inverse de la fonction conductance.
 
     Args:
-        Conductance (float): [description]
+        Conductance (float): La conductance hydraulique.
 
     Returns:
-        float: [description]
+        float: Le rayon correspondant. Renvoie 0 si la conductance est négative.
     """
-    return 8*Conductance**(1/4)/pi
+    if Conductance < 0:
+        return 0.0
+    return (8 * Conductance / pi)**(1/4)
 
-def miseAJourDébits(Graphe:np.array, Blob:np.array, Pressions: list) -> np.array:
-    """met à jour la matrice des débits grâce aux nouvelles valeurs des pressions de chaque noeud et des conductances de chaque arêtes
+def miseAJourDébits(Graphe:np.array, Blob:np.array, Pressions: np.array) -> np.array:
+    """Met à jour la matrice des débits (flux) entre les noeuds (vectorized).
+
+    Args:
+        Graphe (np.array): Matrice d'adjacence pondérée (longueurs).
+        Blob (np.array): Matrice d'adjacence pondérée (rayons).
+        Pressions (np.array): Vecteur des pressions à chaque noeud.
 
     Returns:
-        [type]: [description]
+        np.array: Matrice (anti-symétrique) des débits entre les noeuds. Débit[i, j] > 0 signifie flux de i vers j.
     """
     n = np.shape(Graphe)[0]
     Débits = np.zeros((n,n))
-    for i in range(n):
-        for j in range(i+1,n):
-            if Blob[i,j] != np.inf:
-                Débits[i,j] = (conductance(Blob[i,j]))*(Pressions[i]-Pressions[j])/Graphe[i,j]
-                Débits[j,i] = -Débits[i,j]  # matrice anti-symmétrique
+
+    # Create masks for valid edges (exist in both Graphe and Blob, and have positive length)
+    valid_edge_mask = (Blob != np.inf) & (Graphe != np.inf) & (Graphe > 0)
+
+    # Calculate conductances for all possible edges (vectorized)
+    C_matrix = np.full_like(Blob, 0.0, dtype=float)
+    radii_valid = Blob[valid_edge_mask]
+    C_matrix[valid_edge_mask] = conductance(radii_valid)
+
+    # Calculate pressure differences (vectorized)
+    P_diff = Pressions[:, np.newaxis] - Pressions[np.newaxis, :]
+
+    # Calculate flows only for valid edges
+    Débits[valid_edge_mask] = C_matrix[valid_edge_mask] * P_diff[valid_edge_mask] / Graphe[valid_edge_mask]
+
     return Débits
 
 def relationRenforcement(Rayon:float, Debit:float, alpha:float, mu:float) -> float:
-    """renvoie la nouvelle valeur de conductance en suivant la relation de renforcement
+    """Applique la relation de renforcement pour mettre à jour la conductance d'une arête.
 
     Args:
-        Rayon (float): [description]
-        Debit (float): [description]
-        alpha (float): [description]
-        mu (float): [description]
+        Rayon (float): Rayon actuel de l'arête.
+        Debit (float): Débit absolu à travers l'arête.
+        alpha (float): Paramètre de renforcement lié au débit.
+        mu (float): Paramètre d'affaiblissement (decay).
 
     Returns:
-        float: [description]
+        float: Nouvelle valeur de conductance après renforcement/affaiblissement.
     """
-    return conductance(Rayon) + alpha*abs(Debit)-mu*conductance(Rayon)
+    C_actuelle = conductance(Rayon)
+    nouvelle_conductance = C_actuelle + alpha * abs(Debit) - mu * C_actuelle
+    return max(0.0, nouvelle_conductance)
 
-def miseAJourRayons(Blob: np.array, Débits: np.array, Pressions: list, alpha:float, mu:float, arbreDeSteiner:np.array, delta:float) -> None:
-    """met à jour la matrice des rayons grâce à la relation de renforcement
+def miseAJourRayons(Blob: np.array, Débits: np.array, alpha:float, mu:float, arbreDeSteiner:np.array, delta:float) -> None:
+    """Met à jour la matrice des rayons (Blob) en utilisant la relation de renforcement (vectorized).
 
     Args:
-        Blob (np.array): _description_
-        D (_type_): _description_
-        Pressions (list): _description_
-        alpha (float): _description_
-        mu (float): _description_
-        arbreDeSteiner (np.array): _description_
-        delta (float): _description_
+        Blob (np.array): Matrice des rayons (à mettre à jour in-place).
+        Débits (np.array): Matrice des débits calculés.
+        alpha (float): Paramètre de renforcement alpha.
+        mu (float): Paramètre d'affaiblissement mu.
+        arbreDeSteiner (np.array): Matrice indiquant l'appartenance à l'arbre de Steiner (np.inf si non membre).
+        delta (float): Facteur multiplicatif appliqué aux arêtes (1+delta pour Steiner, 1-delta sinon).
     """
     n = np.shape(Blob)[0]
-    for i in range(n):
-        for j in range(i+1, n):
-            if Blob[i,j] != np.inf:
-                if arbreDeSteiner[i,j] != np.inf:
-                    Blob[i, j] = rayon(relationRenforcement(Blob[i, j], Débits[i, j],alpha,mu))*(1+delta)
-                else:
-                    Blob[i, j] = rayon(relationRenforcement(Blob[i, j], Débits[i, j],alpha,mu))*(1-delta)
-            Blob[j, i] = Blob[i, j]
+    # Mask for existing edges in the current Blob
+    existing_edge_mask = (Blob != np.inf)
 
-def miseAJour(Graphe:np.array, Blob:np.array, Pression:list, alpha:float, mu:float, arbreDeSteiner:np.array, delta:float)->None:
-    """met à jour les Rayons du Blob
+    # Calculate new conductances only for existing edges
+    Nouvelles_Conductances = np.full_like(Blob, np.nan, dtype=float)
+    Rayons_existants = Blob[existing_edge_mask]
+    Debits_existants = Débits[existing_edge_mask]
+    Nouvelles_Conductances[existing_edge_mask] = relationRenforcement(Rayons_existants, Debits_existants, alpha, mu)
+
+    # Convert new conductances back to radii
+    Nouveaux_Rayons = np.full_like(Blob, np.inf, dtype=float)
+    Conductances_valides_mask = ~np.isnan(Nouvelles_Conductances) & existing_edge_mask
+    Nouveaux_Rayons[Conductances_valides_mask] = rayon(Nouvelles_Conductances[Conductances_valides_mask])
+
+    # Apply Steiner tree bias (vectorized)
+    steiner_mask = (arbreDeSteiner != np.inf) & Conductances_valides_mask
+    non_steiner_mask = (arbreDeSteiner == np.inf) & Conductances_valides_mask
+
+    Nouveaux_Rayons[steiner_mask] *= (1 + delta)
+    Nouveaux_Rayons[non_steiner_mask] *= (1 - delta)
+
+    # Update Blob symmetrically
+    np.copyto(Blob, Nouveaux_Rayons)
+
+def miseAJour(Graphe:np.array, Blob:np.array, Pression:np.array, alpha:float, mu:float, arbreDeSteiner:np.array, delta:float)->None:
+    """Effectue une étape complète de mise à jour du réseau (Blob).
 
     Args:
-        Graphe (np.array): _description_
-        Blob (np.array): _description_
-        Pression (list): _description_
-        alpha (float): _description_
-        mu (float): _description_
-        arbreDeSteiner (np.array): _description_
-        delta (float): _description_
+        Graphe (np.array): Matrice d'adjacence pondérée (longueurs).
+        Blob (np.array): Matrice d'adjacence pondérée (rayons) - sera modifiée in-place.
+        Pression (np.array): Vecteur des pressions aux noeuds.
+        alpha (float): Paramètre de renforcement alpha.
+        mu (float): Paramètre d'affaiblissement mu.
+        arbreDeSteiner (np.array): Matrice indiquant l'appartenance à l'arbre de Steiner.
+        delta (float): Facteur multiplicatif différentiel lié à l'arbre de Steiner.
     """
-    Débits=miseAJourDébits(Graphe, Blob, Pression)
-    miseAJourRayons(Blob, Débits, Pression, alpha, mu, arbreDeSteiner, delta)
-    
+    Débits = miseAJourDébits(Graphe, Blob, Pression)
+    miseAJourRayons(Blob, Débits, alpha, mu, arbreDeSteiner, delta)
