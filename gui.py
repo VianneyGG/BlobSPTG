@@ -14,8 +14,7 @@ from tkinter import messagebox # Import messagebox for showing errors
 # Ensure Blobv2.py and the Fonctions directory are in the Python path
 try:
     from Blobv2 import Blob
-    from Fonctions.Affichage import nx2np, np2nx
-    from Fonctions.Initialisation import traitementTerminaux, poids
+    from Fonctions.Affichage import nx2np
 except ImportError as e:
     messagebox.showerror("Import Error", f"Could not import Blob algorithm components: {e}\nMake sure Blobv2.py and Fonctions directory are accessible.")
 

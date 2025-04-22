@@ -45,7 +45,7 @@ def proba(Graphe:np.array, Terminaux:list)->list:
     probabilities = [l / total_length for l in lengths]
     return probabilities
 
-def selectionPuit(Graphe:np.array, Terminaux:list)->int:
+def selectionPuit(Graphe:np.array, Terminaux:list, mode)->int:
     """Sélectionne aléatoirement un puit parmi les terminaux selon la loi de probabilité définie par `proba`.
 
     Args:
@@ -55,10 +55,17 @@ def selectionPuit(Graphe:np.array, Terminaux:list)->int:
     Returns:
         int: Indice du noeud sélectionné comme puit.
     """
+    
+    if mode == 'unif':
+        return rd.choice(Terminaux)
+    
+    
     probabilities = proba(Graphe, Terminaux)
     if not Terminaux:
         raise ValueError("La liste des terminaux ne peut pas être vide.")
     # Ensure probabilities sum to 1, handling potential floating point inaccuracies
     probabilities = np.array(probabilities)
     probabilities /= probabilities.sum()
+    
+    
     return rd.choice(Terminaux, p=probabilities)

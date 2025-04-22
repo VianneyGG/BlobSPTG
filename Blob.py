@@ -1,8 +1,10 @@
 from math import*
+from Fonctions.Pression import calculNouvellesPressions
 import numpy as np
 import numpy.random as rd
 import matplotlib.pyplot as plt
 import networkx as nx
+
 
 def aretesGraphes(G:np.array,Lignes:list)->list:
     """
@@ -192,41 +194,6 @@ def miseAJourGraphe(G:np.array,Rayons:np.array,Debits:np.array,Lignes:list,Termi
         Lignes.pop(supr[n-1-s])
     return G,Rayons,Debits,Lignes,Terminaux
 
-def calculNouvellesPressions(Graphe:np.array, Blob:np.array, Terminaux:list, puit:int, débitEntrant)->tuple:
-    """Actualisation des pressions
-
-    Args:
-        Graphe (np.array): _description_
-        Blob (np.array): _description_
-        Terminaux (list): _description_
-        Pression (list): _description_
-        puit (int):  indice du puit dans la liste des Terminaux
-
-    Returns:
-        list : liste des pressions actually
-        np.array : Graphe
-        
-    """
-    n=np.shape(Graphe)[0]
-    A =np.zeros((n,n)) # matrice des coefficients
-    B =np.zeros((n,)) # second membre
-    for k in Terminaux:
-        B[k] = -débitEntrant  # Tous les autre terminaux sont des sources
-    B[Terminaux[puit]]= débitEntrant*(len(Terminaux)-1)
-     
-    for S in range(n): # Equations du réseau de Poisson
-        if S != Terminaux[puit] :
-            for V in voisins(S,Blob):
-                A[S,V] += conductance(Blob[S,V])/Graphe[S,V]
-                A[S,S] -= conductance(Blob[S,V])/Graphe[S,V]
-   
-    for k in range(n): # la pression au niveau du puit est nulle
-        A[k,Terminaux[puit]]=0
-    A[Terminaux[puit], Terminaux[puit]] = 1 
-    
-    Pression=np.linalg.solve(A,B)
-    return Pression
-
 def itération(k:int,G:np.array,p:int,Terminaux:list,DébitEntrant:float)->np.array:
     n=np.shape(G)[0]
     Blob=np.copy(G)
@@ -235,8 +202,9 @@ def itération(k:int,G:np.array,p:int,Terminaux:list,DébitEntrant:float)->np.ar
     Pression=[0 for i in range(n)]
     Lignes=[i for i in range(n)]
     for i in range(k): 
+        puit = rd.choice(Terminaux)
         print(Rayons,Blob)
-        Pression,Blob,Terminaux = calculNouvellesPressions(Blob,Rayons,Terminaux,Pression,DébitEntrant)
+        Pression = calculNouvellesPressions(G,Blob,Terminaux,puit,DébitEntrant)
         Débits = miseAJourDébits(Blob,Rayons,Débits,Pression)
         Rayons,Blob = miseAJourRayons(Blob,Rayons,Débits,Pression)
         Blob,Rayons,Débits,Lignes,Terminaux=miseAJourGraphe(Blob,Rayons,Débits,Lignes,Terminaux)

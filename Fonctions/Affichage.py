@@ -76,7 +76,7 @@ def nx2np(Graphe_nx:nx.Graph, nodelist=None)->np.array:
     return G_np
 
 def affichage(Graphe:np.array, Blob:np.array, itération:int, pos:dict, Terminaux:list, temps_debut:float, resultat:bool=False)->None:
-    """Affiche l'état actuel du Blob superposé au Graphe de base.
+    """Affiche l'état actuel du Blob superposé au Graphe de base, avec les rayons des arêtes du Blob.
 
     Args:
         Graphe (np.array): Matrice d'adjacence (longueurs) du graphe original.
@@ -90,7 +90,11 @@ def affichage(Graphe:np.array, Blob:np.array, itération:int, pos:dict, Terminau
     G_nx = np2nx(Graphe) # Convert base graph to networkx
     n = np.shape(Graphe)[0]
 
-    plt.clf() # Clear previous plot
+    # --- Ensure interactive mode is on for updates without new windows ---
+    if not resultat and not plt.isinteractive():
+        plt.ion() # Turn on interactive mode if not final result
+
+    plt.clf() # Clear previous plot content from the current figure
 
     # --- Draw Base Graph ---
     nx.draw_networkx_nodes(G_nx, pos, node_color="grey", node_size=300, alpha=0.8)
@@ -102,7 +106,7 @@ def affichage(Graphe:np.array, Blob:np.array, itération:int, pos:dict, Terminau
     i_indices, j_indices = np.triu_indices(n, k=1)
     valid_blob_mask = (Blob[i_indices, j_indices] != np.inf) & \
                       ~np.isnan(Blob[i_indices, j_indices]) & \
-                      (Blob[i_indices, j_indices] > 1e-6)
+                      (Blob[i_indices, j_indices] > 1e-6) # Use a small threshold
 
     aretesBlob = list(zip(i_indices[valid_blob_mask], j_indices[valid_blob_mask]))
     radiiBlob = Blob[i_indices[valid_blob_mask], j_indices[valid_blob_mask]]
@@ -110,6 +114,7 @@ def affichage(Graphe:np.array, Blob:np.array, itération:int, pos:dict, Terminau
     # Calculate widths (vectorized)
     # Adjust scaling factor (1e6) and base (log10) as needed
     # Add 1 inside log10 to handle radii near 0 gracefully
+    # Ensure widths are non-negative
     widthsBlob = np.maximum(0.1, np.log10(1 + 1e6 * radiiBlob))
 
     # Collect nodes involved in the blob structure
@@ -118,11 +123,17 @@ def affichage(Graphe:np.array, Blob:np.array, itération:int, pos:dict, Terminau
     # Draw Blob nodes (non-terminals involved in Blob)
     noeudsBlob_non_terminaux = list(noeudsBlob - set(Terminaux))
     nx.draw_networkx_nodes(G_nx, pos, nodelist=noeudsBlob_non_terminaux, node_color="green", node_size=300, alpha=0.7)
+
     # Draw Blob edges
     if aretesBlob: # Check if there are any edges to draw
         nx.draw_networkx_edges(G_nx, pos, edgelist=aretesBlob, width=widthsBlob, alpha=0.7, edge_color="green")
 
-    # --- Labels ---
+        # --- Draw Blob Edge Labels (Radii) ---
+        edge_labels = {edge: f"{radius:.2e}" for edge, radius in zip(aretesBlob, radiiBlob)}
+        nx.draw_networkx_edge_labels(G_nx, pos, edge_labels=edge_labels, font_size=7, font_color='darkgreen')
+
+
+    # --- Node Labels ---
     labels = {i: str(i) for i in range(n)} # Node labels
     nx.draw_networkx_labels(G_nx, pos, labels, font_size=8, font_color="black")
 
@@ -130,6 +141,8 @@ def affichage(Graphe:np.array, Blob:np.array, itération:int, pos:dict, Terminau
     plt.axis('off') # Hide axes
 
     if resultat:
+        if plt.isinteractive():
+            plt.ioff() # Turn off interactive mode for the final blocking plot
         temps_ecoule = time.time() - temps_debut
         # Calculate weight using the optimized function
         poids_final = poids(Graphe, Blob)
@@ -139,14 +152,13 @@ def affichage(Graphe:np.array, Blob:np.array, itération:int, pos:dict, Terminau
 
     else:
         # Conditional display for intermediate steps
-        # Plotting frequently can significantly slow down the simulation.
-        # Increase the interval or save figures to files instead of displaying interactively.
         plot_interval = 500 # Example: Plot every 500 iterations
         if itération % plot_interval == 0 and itération != 0:
             titre = f'Itération {itération}'
             plt.title(titre)
-            plt.show(block=False) # Show non-blocking plot
-            plt.pause(0.5) # Pause briefly
+            # Instead of plt.show(block=False), rely on plt.pause() with interactive mode
+            plt.draw() # Redraw the current figure
+            plt.pause(0.1) # Pause briefly to allow GUI update, adjust time as needed
             # Consider saving the figure instead:
             # plt.savefig(f"output/iteration_{itération:06d}.png", bbox_inches='tight', dpi=150)
             # plt.close() # Close automatically if saving
