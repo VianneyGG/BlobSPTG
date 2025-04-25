@@ -1,6 +1,5 @@
 import numpy as np
 import numpy.random as rd
-from MiseAJour import rayon # Assuming rayon is correctly defined here
 
 def initialisation(Graphe:np.array) -> np.array:
     """Initialise la matrice des rayons (Blob) basée sur la topologie du Graphe (vectorized).

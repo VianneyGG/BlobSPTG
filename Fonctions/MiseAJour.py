@@ -1,8 +1,7 @@
 from math import *
 import numpy as np
-from Pression import Conductivity
 
-def miseAJourDébits(Graphe:np.array, Blob:np.array, Pressions: np.array, alpha:float, mu:float, arbreDeSteiner:np.array, delta:float, mode)->None:
+def miseAJourDébits(Graphe:np.array, Blob:np.array, step:int, Pressions: np.array, alpha:float, mu:float, delta:float, mode:str, arbreDeSteiner:np.array)->None:
     """Met à jour la matrice des débits (flux) entre les noeuds (vectorized).
 
     Args:
@@ -25,9 +24,9 @@ def miseAJourDébits(Graphe:np.array, Blob:np.array, Pressions: np.array, alpha:
     Q_matrix[valid_edge_mask] = Blob[valid_edge_mask] * P_diff[valid_edge_mask] / Graphe[valid_edge_mask]
     
     # Update conducivity 
-    Blob[valid_edge_mask] = relationRenforcement(Blob[valid_edge_mask], Q_matrix[valid_edge_mask], alpha, mu, arbreDeSteiner[valid_edge_mask], delta, mode)
+    Blob[valid_edge_mask] = relationRenforcement(Blob[valid_edge_mask], Q_matrix[valid_edge_mask], step, alpha, mu, delta, mode)
 
-def relationRenforcement(Conductivity:float, Flow:float, alpha:float, mu:float,arbreDeSteiner:np.array, delta:float, mode:str) -> float:
+def relationRenforcement(Conductivity:float, Flow:float, step:int, alpha:float, mu:float, delta:float, mode:str) -> float:
     """Applique la relation de renforcement pour mettre à jour la Conductivity d'une arête.
 
     Args:
@@ -40,7 +39,11 @@ def relationRenforcement(Conductivity:float, Flow:float, alpha:float, mu:float,a
         float: Nouvelle valeur de Conductivity après renforcement/affaiblissement.
     """
     if mode == 'simple':
-        return np.maximum(0.0, alpha * np.abs(Flow) - (mu-1) * Conductivity)
+        return np.maximum(0.0, alpha * np.abs(Flow) - (mu - 1) * Conductivity)
+    if mode == 'vieillesse':
+        # Affaiblissement exponentiel de la conductivité
+        loss = 1-1/np.log(np.sqrt(step-49)) if step > 50 else 1.0
+        return np.maximum(0.0, alpha * np.abs(Flow) - (loss - 1) * Conductivity)
 
 def miseAjourRayons(Blob:np.array, epsilon:float)->None:
     """Met à jour les rayons du réseau (Blob) en fonction des débits.
@@ -55,7 +58,7 @@ def miseAjourRayons(Blob:np.array, epsilon:float)->None:
     # Set all values below epsilon to np.inf
     Blob[Blob < epsilon] = np.inf
 
-def miseAJour(Graphe:np.array, Blob:np.array, Pression:np.array, alpha:float, mu:float, arbreDeSteiner:np.array, delta:float,epsilon:float , mode:str='simple')->None:
+def miseAJour(Graphe:np.array, Blob:np.array, step:int, Pression:np.array, alpha:float, mu:float, delta:float,epsilon:float , mode:str='simple', arbreDeSteiner:np.array=([]))->None:
     """Effectue une étape complète de mise à jour du réseau (Blob).
 
     Args:
@@ -67,5 +70,5 @@ def miseAJour(Graphe:np.array, Blob:np.array, Pression:np.array, alpha:float, mu
         arbreDeSteiner (np.array): Matrice indiquant l'appartenance à l'arbre de Steiner.
         delta (float): Facteur multiplicatif différentiel lié à l'arbre de Steiner.
     """
-    miseAJourDébits(Graphe, Blob, Pression, alpha, mu, arbreDeSteiner, delta, mode)
+    miseAJourDébits(Graphe, Blob, step, Pression, alpha, mu, delta, mode, arbreDeSteiner)
     miseAjourRayons(Blob,epsilon)

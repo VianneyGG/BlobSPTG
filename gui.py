@@ -11,12 +11,12 @@ import os # To get CPU count
 from tkinter import messagebox # Import messagebox for showing errors
 
 # --- Import Blob algorithm and helpers ---
-# Ensure Blobv2.py and the Fonctions directory are in the Python path
+# Ensure Blobv3.py and the Fonctions directory are in the Python path
 try:
-    from Blobv2 import Blob
+    from MS3_PO import MS3_PO # Updated import
     from Fonctions.Affichage import nx2np
 except ImportError as e:
-    messagebox.showerror("Import Error", f"Could not import Blob algorithm components: {e}\nMake sure Blobv2.py and Fonctions directory are accessible.")
+    messagebox.showerror("Import Error", f"Could not import Blob algorithm components: {e}\nMake sure Blobv3.py and Fonctions directory are accessible.")
 
 # Reference values for scaling
 DEFAULT_GRID_SIZE = 10
@@ -499,91 +499,96 @@ class GraphGUI:
                  messagebox.showerror("Error", "Could not map terminals to graph nodes.")
                  return
 
-            # Store index mapping for the step checker
             self.current_index_to_coord = index_to_coord.copy()
 
-            # Define the callback function to put steps onto the queue
             def gui_step_callback(intermediate_blob_state):
-                if self.blob_running: # Only queue if still supposed to be running
-                    self.blob_step_queue.put(intermediate_blob_state)
+                if self.blob_running:
+                    self.blob_step_queue.put(intermediate_blob_state.copy())
 
             print(f"Running Blob with {np_graph.shape[0]} nodes and terminals: {terminal_indices}")
-            self.blob_running = True # Set flag before starting
+            self.blob_running = True
+            while not self.blob_step_queue.empty():
+                try: self.blob_step_queue.get_nowait()
+                except queue.Empty: break
+
             future = self.executor.submit(
                 Blob,
                 np_graph,
-                terminal_indices,
-                A=1,
-                B=1000,
+                set(terminal_indices),
+                M=1,
+                K=1000,
                 display_result=False,
-                positions=None,
-                step_callback=gui_step_callback # Pass the callback here
+                step_callback=gui_step_callback
             )
 
             future.add_done_callback(
                 lambda f: self._handle_blob_result(f)
             )
-            # Start checking for intermediate steps
-            self.master.after(100, self._check_blob_steps)
+            self.master.after(50, self._check_blob_steps)
             print("Blob algorithm submitted. Monitoring steps...")
 
         except NameError as e:
              messagebox.showerror("Error", f"Blob function or helper not found: {e}. Check imports.")
+             self.blob_running = False
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred during Blob preparation: {e}")
             print(f"Error preparing Blob: {e}")
+            self.blob_running = False
 
     def _check_blob_steps(self):
         """Periodically checks the queue for intermediate blob results and updates canvas."""
         if not self.blob_running:
-            return # Stop checking if Blob is no longer running
+            print("Blob step checking stopped.")
+            return
 
         try:
-            # Process all available steps in the queue for this check cycle
+            processed_step = False
             while True:
                 intermediate_blob_np = self.blob_step_queue.get_nowait()
+                processed_step = True
 
-                # Convert matrix to edges
                 result_edges = []
                 num_nodes = intermediate_blob_np.shape[0]
                 index_to_coord = self.current_index_to_coord
                 if num_nodes != len(index_to_coord):
-                    print("Warning: Intermediate matrix size doesn't match node mapping.")
+                    print(f"Warning: Intermediate matrix size ({num_nodes}) doesn't match node mapping ({len(index_to_coord)}). Skipping step.")
+                    continue
+
+                threshold = 1e-6
 
                 for i in range(num_nodes):
                     for j in range(i + 1, num_nodes):
-                        threshold = 1e-6 # Adjust as needed based on Blob output values
                         if np.isfinite(intermediate_blob_np[i, j]) and intermediate_blob_np[i, j] > threshold:
                             coord1 = index_to_coord.get(i)
                             coord2 = index_to_coord.get(j)
                             if coord1 and coord2:
                                 result_edges.append((coord1, coord2))
 
-                # Update the display
-                self.display_blob_result(result_edges)
+                if processed_step:
+                    self.display_blob_result(result_edges)
 
         except queue.Empty:
             pass
         except Exception as e:
             print(f"Error processing blob step: {e}")
-            self.blob_running = False # Stop on error
 
-        # Schedule the next check only if still running
         if self.blob_running:
-            self.master.after(100, self._check_blob_steps)
+            self.master.after(50, self._check_blob_steps)
 
     def _handle_blob_result(self, future):
         """Callback function to process the FINAL Blob result from the thread."""
         was_running = self.blob_running
         self.blob_running = False
+
         while not self.blob_step_queue.empty():
             try:
                 self.blob_step_queue.get_nowait()
             except queue.Empty:
                 break
+        print("Cleared blob step queue.")
 
         if not was_running:
-             print("Blob result received, but process was already stopped.")
+             print("Blob result received, but process was already stopped or finished.")
              return
 
         try:
@@ -594,11 +599,12 @@ class GraphGUI:
             num_nodes = result_blob_np.shape[0]
             index_to_coord = self.current_index_to_coord
             if num_nodes != len(index_to_coord):
-                 print("Warning: Final matrix size doesn't match node mapping.")
+                 print(f"Warning: Final matrix size ({num_nodes}) doesn't match node mapping ({len(index_to_coord)}).")
+
+            threshold = 1e-6
 
             for i in range(num_nodes):
                 for j in range(i + 1, num_nodes):
-                    threshold = 1e-6
                     if np.isfinite(result_blob_np[i, j]) and result_blob_np[i, j] > threshold:
                         coord1 = index_to_coord.get(i)
                         coord2 = index_to_coord.get(j)
@@ -621,10 +627,14 @@ class GraphGUI:
         blob_edge_width = 3.0
 
         if not edges:
-            print("No edges to display from Blob result.")
             return
 
+        drawn_edges = set()
         for coord1, coord2 in edges:
+            edge_tuple = tuple(sorted((coord1, coord2)))
+            if edge_tuple in drawn_edges:
+                continue
+
             if coord1 in self.nodes and coord2 in self.nodes:
                 r1, c1 = coord1
                 r2, c2 = coord2
@@ -638,10 +648,10 @@ class GraphGUI:
                     width=blob_edge_width,
                     tags="blob_edge"
                 )
+                drawn_edges.add(edge_tuple)
 
-        self.canvas.tag_raise("blob_edge")
+        self.canvas.tag_raise("node")
         self.canvas.tag_lower("blob_edge", "node")
-        self.canvas.tag_lower("blob_edge", "placeholder")
 
     def update_edges(self, event=None):
         self.canvas.delete("edge")
@@ -668,22 +678,23 @@ class GraphGUI:
             self.canvas.tag_lower("edge", "node")
 
     def clear_grid(self):
-        self.blob_running = False
+        if self.blob_running:
+            print("Clearing grid: Stopping active Blob process.")
+            self.blob_running = False
+
         while not self.blob_step_queue.empty():
-            try:
-                self.blob_step_queue.get_nowait()
-            except queue.Empty:
-                break
+            try: self.blob_step_queue.get_nowait()
+            except queue.Empty: break
         while not self.mst_queue.empty():
-            try:
-                self.mst_queue.get_nowait()
-            except queue.Empty:
-                break
+            try: self.mst_queue.get_nowait()
+            except queue.Empty: break
+
         self.nodes.clear()
         self.terminals.clear()
         self.canvas.delete("blob_edge")
         self.draw_grid()
         self.update_edges()
+        self.current_index_to_coord = {}
         print("Grid cleared.")
 
     def _select_nodes_from_chunk(self, coord_chunk, num_to_select):
@@ -691,19 +702,18 @@ class GraphGUI:
         if num_to_select <= 0:
             return []
         if num_to_select >= len(coord_chunk):
-            return coord_chunk # Select all if requested more than available
+            return coord_chunk
         return random.sample(coord_chunk, num_to_select)
 
     def _calculate_mst_radius(self, node_coords):
         """Calculates the optimal radius based on MST (runs in a separate thread)."""
         if len(node_coords) < 2:
-            return 1.0 # Default radius if not enough nodes
+            return 1.0
 
         temp_g = nx.Graph()
         temp_g.add_nodes_from(node_coords)
         max_mst_edge_weight = 0
 
-        # Build graph for MST
         for coord1, coord2 in combinations(node_coords, 2):
             r1, c1 = coord1
             r2, c2 = coord2
@@ -712,7 +722,6 @@ class GraphGUI:
                 temp_g.add_edge(coord1, coord2, weight=distance)
 
         try:
-            # Check connectivity before calculating MST
             if not nx.is_connected(temp_g):
                 print("Graph is not connected, cannot compute MST reliably for radius adjustment.")
                 return min(1.0, float(MAX_RADIUS))
