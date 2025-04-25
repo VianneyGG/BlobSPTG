@@ -1,7 +1,7 @@
 import networkx as nx
 import numpy as np
 from Blobv2 import Blob
-from Fonctions.Affichage import *
+from Fonctions.Outils import *
 
 g=nx.Graph()
 for k in range(10):

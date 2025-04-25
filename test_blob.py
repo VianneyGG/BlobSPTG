@@ -3,22 +3,30 @@ import networkx as nx
 import matplotlib.pyplot as plt
 import random
 import math
+import sys
+import os
+import functools # Import functools
+
+# Ensure Fonctions directory is in the path if MS3_PO_MT is run directly
+# sys.path.append(os.path.dirname(os.path.abspath(__file__))) # Optional: Adjust if needed
 
 # Assuming Blobv3.py and Fonctions are accessible
-from MS3_PO import MS3_PO # Import Blob and potentially poids if needed by Blobv3
-from Fonctions.Affichage import nx2np # Import the conversion utility
+from MS3_PO import MS3_PO
+from MS3_PO_MT import MS3_PO_MT# Import Blob and potentially poids if needed by Blobv3
+from Fonctions.Outils import nx2np # Import the conversion utility
 
-# --- Matplotlib Callback ---
-callback_counter = 0
-fig, ax = plt.subplots(figsize=(8, 8)) # Create figure and axes once
+# --- Global variables for callback counter and plot ---
+fig, ax = plt.subplots(figsize=(8, 8))
 
-def matplotlib_callback(blob_state, base_pos, terminal_nodes, all_nodes):
-    """Visualizes the blob state using matplotlib every 10 steps."""
-    global callback_counter
-    callback_counter += 1
+# --- Matplotlib Callback (Accepts step_index) ---
+# Add step_index argument, remove blob_state (it's the first arg passed by partial)
+def matplotlib_callback(blob_state, step_index, base_pos, terminal_nodes, all_nodes):
+    """Visualizes the blob state using matplotlib at a specific step."""
+    global fig, ax # Keep these globals
 
-    if callback_counter % 20 != 0:
-        return # Only draw every 10 steps
+    # Optional: Add a check to draw less frequently if desired, based on step_index
+    if step_index % 20 != 0:
+         return # Only draw every 20 steps
 
     plt.clf() # Clear the current figure
 
@@ -30,6 +38,7 @@ def matplotlib_callback(blob_state, base_pos, terminal_nodes, all_nodes):
     # Ensure index mapping matches if nodes were relabeled
     # Assuming nodes 0 to num_nodes-1 correspond directly to matrix indices
     if num_nodes_state != len(all_nodes):
+         # This warning check is now valid again
          print(f"Warning: Blob state size {num_nodes_state} != node list size {len(all_nodes)}")
          # Adjust logic if necessary, here we assume direct mapping
 
@@ -62,20 +71,24 @@ def matplotlib_callback(blob_state, base_pos, terminal_nodes, all_nodes):
         edge_labels = {(u, v): f"{w:.2f}" for u, v, w in blob_edges_with_weights}
         nx.draw_networkx_edge_labels(blob_graph_viz, base_pos, edge_labels=edge_labels, font_size=7, font_color='darkgreen')
 
-    plt.title(f"Blob State - Step {callback_counter}")
+
+    # Use step_index in the title
+    plt.title(f"Blob State - Step {step_index}")
     plt.xlabel("X coordinate")
     plt.ylabel("Y coordinate")
     plt.axis('equal') # Ensure aspect ratio is equal
     plt.grid(True, linestyle='--', alpha=0.5)
     plt.pause(0.5) # Pause for 0.5 seconds to update the plot
 
+
 # --- Main Test Logic ---
 if __name__ == "__main__":
+
     print("--- Testing Blob Function with Grid Graph and Matplotlib Viz ---")
 
     # 1. Create Grid Graph
-    grid_n = 15 # Number of rows
-    grid_p = 15 # Number of columns
+    grid_n = 12 # Number of rows - Check if this matches the expected 25 nodes? If 5x5 -> 25 nodes.
+    grid_p = 12 # Number of columns
     num_total_nodes = grid_n * grid_p
     print(f"Creating a {grid_n}x{grid_p} grid graph ({num_total_nodes} nodes).")
 
@@ -88,6 +101,8 @@ if __name__ == "__main__":
     # Relabel nodes from (r,c) tuples to integers 0 to N-1
     node_mapping = {(r, c): r * grid_p + c for r in range(grid_n) for c in range(grid_p)}
     g_nx_relabeled = nx.relabel_nodes(g_nx, node_mapping, copy=True)
+
+    # Define context locally
     pos = {node_mapping[old_node]: pos_tuples[old_node] for old_node in pos_tuples}
     all_node_indices = list(g_nx_relabeled.nodes())
 
@@ -107,12 +122,13 @@ if __name__ == "__main__":
     num_terminals = 5
     if num_terminals > num_total_nodes:
         num_terminals = num_total_nodes
+    # Define terminals locally
     terminals = set(random.sample(all_node_indices, num_terminals))
     print(f"Terminals (randomly selected): {terminals}")
 
     # 3. Set parameters
-    M_test = 2
-    K_test = 300 # Number of steps for visualization
+    M_test = 10
+    K_test = 400 # Number of steps for visualization
     alpha_test = 0.7
     mu_test = 1.0
     delta_test = 0.2
@@ -120,13 +136,18 @@ if __name__ == "__main__":
 
     print(f"Running Blob with M={M_test}, K={K_test}...")
 
-    # 4. Prepare Matplotlib and Callback
-    plt.ion() # Turn on interactive mode
-    # Create the callback with necessary context (using lambda for simplicity)
-    viz_callback = lambda state: matplotlib_callback(state, pos, terminals, all_node_indices)
+
+    # 4. Prepare Matplotlib and Callback using functools.partial
+    plt.ion()
+    # Update partial call: bind only context args
+    # The resulting viz_callback will expect (blob_state, step_index)
+    viz_callback = functools.partial(matplotlib_callback,
+                                     base_pos=pos,
+                                     terminal_nodes=terminals,
+                                     all_nodes=all_node_indices)
 
     # 5. Call Blob function
-    final_blob = MS3_PO( # This now returns the MST of the best blob
+    final_blob = MS3_PO_MT( # This now returns the MST of the best blob
         Graphe=sample_graph.copy(),
         Terminaux=terminals,
         M=M_test,
@@ -136,9 +157,10 @@ if __name__ == "__main__":
         delta=delta_test,
         epsilon=epsilon_test,
         display_result=True, # Use our callback for display
-        step_callback=viz_callback,
+        step_callback=viz_callback, # Pass the partial object
         modeRenfo='vieillesse'
     )
+
 
     # 6. Final Plot and Results
     plt.ioff() # Turn off interactive mode
@@ -158,13 +180,14 @@ if __name__ == "__main__":
                 weight = final_blob[i, j]
                 # Check if it's a valid edge in the MST matrix (not inf)
                 if np.isfinite(weight):
+                    # Use local pos here
                     if i in pos and j in pos:
                         mst_edges.append((i, j))
                         mst_edge_labels[(i, j)] = f"{weight:.2f}" # Store weight for label
 
-        # Draw all nodes
+        # Draw all nodes (use local all_node_indices, pos)
         nx.draw_networkx_nodes(all_node_indices, pos, node_size=20, node_color='lightblue', alpha=0.8)
-        # Draw terminal nodes
+        # Draw terminal nodes (use local terminals, pos)
         nx.draw_networkx_nodes(terminals, pos, node_size=50, node_color='red')
         # Draw MST edges
         if mst_edges:
@@ -175,7 +198,7 @@ if __name__ == "__main__":
             # Draw MST edge labels (optional)
             nx.draw_networkx_edge_labels(mst_graph_viz, pos, edge_labels=mst_edge_labels, font_size=7, font_color='darkblue')
 
-        plt.title(f"Final MST Result (After {K_test} Blob steps)")
+        plt.title(f"Final MST Result (After {K_test + K_test//3} Blob steps)")
         plt.xlabel("X coordinate")
         plt.ylabel("Y coordinate")
         plt.axis('equal')

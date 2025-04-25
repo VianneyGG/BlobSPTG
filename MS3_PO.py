@@ -1,20 +1,17 @@
-import sys
+
 import time
 import heapq
 from math import *
 import time as t
 import numpy as np
-import matplotlib.pyplot as plt
-from multiprocessing import Pool, cpu_count
 import networkx as nx
 
 from Fonctions.Initialisation import *
 from Fonctions.Puit import selectionPuit
 from Fonctions.Pression import calculNouvellesPressions
 from Fonctions.MiseAJour import miseAJour
-from Fonctions.Evolution import evolutionBlob
-from Fonctions.Affichage import *
-from tqdm.auto import tqdm
+from Fonctions.Outils import *
+
 
 def MSTbyPrim(graph_matrix: np.array, start_node_hint: int = 0) -> np.array:
     """
@@ -153,8 +150,6 @@ def MS3_PO(Graphe: np.array, Terminaux: set[int], M: int = 1, K: int = 3000, alp
         # ---------------------------------------------------------
         
         # --- Calculer l'arbre couvrant maximal (MaxST) sur le blob actuel ---
-        original_conductivities = current_blob.copy()
-
         mst_input_matrix = np.full_like(current_blob, np.inf) # Initialize with inf
         finite_mask = np.isfinite(current_blob) # Find finite values
         
@@ -189,14 +184,7 @@ def MS3_PO(Graphe: np.array, Terminaux: set[int], M: int = 1, K: int = 3000, alp
     # Calculer l'MST sur le meilleur blob trouvé
     if meilleur_poids != np.inf:
         print("Calcul de l'Arbre Couvrant Minimum (MST) sur le meilleur résultat...")
-        
-        # --- Choose a start node hint (e.g., the first terminal) ---
-        mst_start_node = next(iter(Terminaux)) if Terminaux else 0 # Pick first terminal, or 0 if no terminals
-        # ---------------------------------------------------------
-
-        # Pass the cost_matrix and start node hint to MSTbyPrim
-        mst_final = MSTbyPrim(meilleur_blob, start_node_hint=mst_start_node)
-        return mst_final
+        return meilleur_blob
     else:
         print("Aucune solution valide trouvée (poids infini). Retourne un graphe vide.")
         return np.full_like(Graphe, np.inf)

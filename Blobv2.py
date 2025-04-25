@@ -12,7 +12,7 @@ from Fonctions.Puit import selectionPuit
 from Fonctions.Pression import calculNouvellesPressions
 from Fonctions.MiseAJour import miseAJour
 from Fonctions.Evolution import evolutionBlob
-from Fonctions.Affichage import *
+from Fonctions.Outils import *
 from tqdm.auto import tqdm
 
 def arbreCouvrant(Graphe: np.array, Terminaux: list) -> np.array:

@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import networkx as nx
 from Blobv2 import Blob
-from Fonctions.Affichage import *
+from Fonctions.Outils import *
 
 
 Terminaux=[]
