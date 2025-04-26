@@ -185,9 +185,10 @@ def MS3_PO_MT(Graphe: np.array, Terminaux: set[int], M: int = 1, K: int = 3000, 
         ksi (float): Paramètre (unused?).
         débitEntrant (float): Débit entrant pour le calcul des pressions.
         modeProba (str): Mode de sélection du puits ('unif', etc.).
-        modeRenfo (str): Mode de renforcement ('simple', etc.).
-        display_result (bool): Si True, affiche la progression du premier worker via step_callback.
+        modeRenfo (str): Mode de renforcement ('simple', 'vieillesse').
+        display_result (bool): Si True, active la progression via step_callback pour le premier worker (m_idx=0).
         step_callback (callable, optional): Callback pour l'affichage pas à pas.
+                                             Receives (current_blob_state, step_index). Defaults to None.
 
     Returns:
         np.array: Matrice d'adjacence de l'arbre de Steiner approximatif (MST du meilleur blob).
@@ -201,10 +202,11 @@ def MS3_PO_MT(Graphe: np.array, Terminaux: set[int], M: int = 1, K: int = 3000, 
     print(f"Lancement de {M} simulations sur {num_workers} coeurs...")
 
     # Prepare arguments for each parallel task
-    # Pass step_callback only to worker 0 if display_result is True
+    # Pass step_callback only if display_result is True (it will be used by worker 0)
+    callback_for_workers = step_callback if display_result else None
     tasks_args = [(Graphe, Terminaux, K, alpha, mu, delta, epsilon, débitEntrant, modeProba, modeRenfo,
-                   display_result, # Still pass display_result to all
-                   step_callback, # Pass callback only to worker 0
+                   display_result, # Pass display_result flag to all workers
+                   callback_for_workers, # Pass the actual callback function
                    i)
                   for i in range(M)]
 
@@ -224,11 +226,10 @@ def MS3_PO_MT(Graphe: np.array, Terminaux: set[int], M: int = 1, K: int = 3000, 
             meilleur_blob = blob
 
     print(f"\nTemps total d'exécution : {time.time() - t_start:.2f} secondes")
-    print([int(results[i][1]) for i in range(M)])
+    print([float(results[i][1]) for i in range(M)])
 
     # Final MST calculation on the best blob found
     if meilleur_blob is not None and meilleur_poids != np.inf:
-        
         print(f"Poids de l'arbre de Steiner final (MST) : {meilleur_poids}")
         return meilleur_blob
     else:

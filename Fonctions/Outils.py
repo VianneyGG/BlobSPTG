@@ -70,7 +70,7 @@ def nx2np(Graphe_nx:nx.Graph, nodelist=None)->np.array:
     if nodelist is None:
         nodelist = sorted(Graphe_nx.nodes())
     # Use 'poids' as the weight attribute, set non-edges to np.inf
-    G_np = nx.to_numpy_array(Graphe_nx, nodelist=nodelist, weight='poids', nonedge=np.inf)
+    G_np = nx.to_numpy_array(Graphe_nx, nodelist=nodelist, weight='weight', nonedge=np.inf)
     # Ensure diagonal is inf (or 0) based on convention
     np.fill_diagonal(G_np, np.inf) # Or 0
     return G_np
