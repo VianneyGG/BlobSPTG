@@ -11,6 +11,7 @@ import queue # For thread communication
 import os # To get CPU count
 from tkinter import messagebox # Import messagebox for showing errors
 from tkinter import Toplevel # Import Toplevel for the pop-up window
+import time # Import time for potential small delays if needed
 
 # --- Import Blob algorithm and helpers ---
 # Ensure Blobv3.py and the Fonctions directory are in the Python path
@@ -34,6 +35,8 @@ INITIAL_CANVAS_HEIGHT = DEFAULT_GRID_SIZE * DEFAULT_CELL_SIZE
 MIN_GRID_SIZE = 2
 MAX_GRID_SIZE = 30
 MAX_RADIUS = 5 # Define the maximum radius limit
+MIN_BLOB_EDGE_WIDTH = 1.0 # Minimum width for blob edges
+MAX_BLOB_EDGE_WIDTH = 6.0 # Maximum width for blob edges
 
 class GraphGUI:
     def __init__(self, master):
@@ -77,21 +80,22 @@ class GraphGUI:
         self.calculate_scaling_factors()
 
         initial_intersections = (DEFAULT_GRID_SIZE + 1) ** 2
-        default_random_nodes = int(0.8 * initial_intersections)
+        default_random_nodes = int(0.6 * initial_intersections)
 
         # Tkinter variables
         self.grid_size_var = tk.IntVar(value=self.grid_size)
         self.radius_var = tk.DoubleVar(value=1.0)
         self.random_nodes_var = tk.IntVar(value=default_random_nodes)
+        self.step_count_var = tk.StringVar(value="Step: -") # Variable for step count display
 
         # Data structures
         self.nodes = {}
         self.terminals = set()
         self.placeholders = {}
+        self.drawn_blob_edges = {} # Maps edge tuple (coord1, coord2) to canvas item ID
         self.offset_x = 0 # Offset for centering grid horizontally
         self.offset_y = 0 # Offset for centering grid vertically
         self.mst_queue = queue.Queue() # Queue for MST result
-        self.blob_step_queue = queue.Queue() # Queue for intermediate Blob steps
         self.blob_running = False # Flag to indicate if Blob is running
         self.current_index_to_coord = {} # To map indices back in step checker
         self.current_np_graph = None # To store original graph weights during blob run
@@ -251,6 +255,15 @@ class GraphGUI:
             style='Menu.TButton'
         )
         blob_button.pack(pady=5, fill=tk.X, padx=5)
+
+        # Add Step Count Label
+        self.step_count_label = ttk.Label(
+            menu_frame,
+            textvariable=self.step_count_var,
+            background=self.menu_bg,
+            foreground=self.menu_fg
+        )
+        self.step_count_label.pack(pady=(10, 5)) # Add some padding
 
         # --- Grid Canvas ---
         self.canvas = tk.Canvas(grid_frame, width=INITIAL_CANVAS_WIDTH, height=INITIAL_CANVAS_HEIGHT, bg=self.window_bg, borderwidth=0, highlightthickness=0)
@@ -444,38 +457,30 @@ class GraphGUI:
             self.canvas.delete("blob_edge") # Clear blob result if graph changes
 
     def build_current_graph(self):
-        """Builds a NetworkX graph from current nodes and edges based on radius."""
+        """Builds a NetworkX graph from current nodes and edges based on radius.
+           Returns the graph and index_to_coord mapping.""" # Removed edge coords from return doc
         g = nx.Graph()
-        # Get current node coordinates
         node_list = list(self.nodes.keys())
-        # Create mappings for NetworkX which prefers integer indices
         coord_to_index = {coord: i for i, coord in enumerate(node_list)}
         index_to_coord = {i: coord for i, coord in enumerate(node_list)}
 
-        # Add nodes to the graph using integer indices
         for i in range(len(node_list)):
             g.add_node(i)
 
-        # Add edges based on radius, using integer indices and distance as weight
-        radius = self.radius_var.get() # Get current radius from slider
-        # Iterate through all unique pairs of nodes
+        radius = self.radius_var.get()
         for i in range(len(node_list)):
             for j in range(i + 1, len(node_list)):
                 coord1 = node_list[i]
                 coord2 = node_list[j]
                 r1, c1 = coord1
                 r2, c2 = coord2
-                # Calculate Euclidean distance assuming grid spacing is 1
                 distance = math.sqrt((r1 - r2)**2 + (c1 - c2)**2)
 
-                # Check if the distance is within the specified radius
                 if 0 < distance <= radius:
-                    # Add edge between the integer indices corresponding to the coordinates
-                    # Store the calculated Euclidean distance as the 'weight' attribute
                     g.add_edge(coord_to_index[coord1], coord_to_index[coord2], weight=distance)
 
-        # Return the NetworkX graph and the index-to-coordinate mapping
-        return g, index_to_coord
+        # Return the graph and mapping
+        return g, index_to_coord # REMOVED edge_coords
 
     def open_blob_config_window(self):
         """Opens a Toplevel window to configure Blob parameters."""
@@ -592,18 +597,21 @@ class GraphGUI:
         print("Preparing graph for Blob algorithm...")
         self.canvas.delete("blob_edge") # Clear previous results
         self.canvas.delete("blob_weight") # Clear previous weights
+        self.drawn_blob_edges.clear() # Clear the edge tracking dictionary
+        self.step_count_var.set("Step: -") # Reset step count display
 
         try:
-            graph, index_to_coord = self.build_current_graph()
+            # Get graph and mapping
+            graph, index_to_coord = self.build_current_graph() # REMOVED edge_coords
             if graph.number_of_nodes() == 0:
                  messagebox.showerror("Error", "Graph construction failed (no nodes).")
                  return
 
-            np_graph = nx2np(graph) # Convert to NumPy adjacency matrix
-            self.current_np_graph = np_graph # Store original weights
+            np_graph = nx2np(graph)
+            self.current_np_graph = np_graph
             terminal_coords = list(self.terminals)
             coord_to_index = {coord: i for i, coord in index_to_coord.items()}
-            terminal_indices = {coord_to_index[t] for t in terminal_coords if t in coord_to_index} # Use set
+            terminal_indices = {coord_to_index[t] for t in terminal_coords if t in coord_to_index}
 
             if len(terminal_indices) < 2:
                  messagebox.showerror("Error", "Could not map terminals to graph nodes.")
@@ -621,7 +629,7 @@ class GraphGUI:
                 blob_func = MS3_PO
                 if m > 1:
                     print(f"Warning: Normal mode selected, running only M=1 simulation (ignoring M={m}).")
-                    actual_m = 1 # Force M=1 for single-threaded version
+                    actual_m = 1
                 print(f"Running Blob Normal with M=1, K={k}")
 
             show_steps = (display_mode == "Steps")
@@ -629,10 +637,8 @@ class GraphGUI:
 
             # --- Prepare for execution ---
             self.blob_running = True
-            # Clear queue before starting
-            while not self.blob_step_queue.empty():
-                try: self.blob_step_queue.get_nowait()
-                except queue.Empty: break
+            if show_steps:
+                self.step_count_var.set("Step: 0") # Initial step
 
             # --- Submit to executor ---
             future = self.executor.submit(
@@ -641,151 +647,169 @@ class GraphGUI:
                 Terminaux=terminal_indices,
                 M=actual_m,
                 K=k,
-                # alpha, mu, delta, epsilon, ksi, débitEntrant are defaults from function signature
                 modeProba=proba_mode,
                 modeRenfo=renfo_mode,
-                display_result=show_steps, # Pass True only if steps are shown (for MT worker 0)
-                step_callback=callback_func
+                display_result=show_steps, # Crucial for MT version to know if worker 0 should record
+                step_callback=callback_func # Pass the callback
             )
 
             future.add_done_callback(
                 lambda f: self._handle_blob_result(f)
             )
-            if show_steps:
-                self.master.after(50, self._check_blob_steps) # Start checking steps only if needed
-            print("Blob algorithm submitted. Monitoring steps..." if show_steps else "Blob algorithm submitted.")
+
+            print("Blob algorithm submitted." + (" Monitoring steps..." if show_steps else ""))
 
         except NameError as e:
              messagebox.showerror("Error", f"Blob function or helper not found: {e}. Check imports.")
              self.blob_running = False
-             self.current_np_graph = None # Clear stored graph on error
+             self.current_np_graph = None
+             self.step_count_var.set("Step: Error") # Indicate error
+             self.drawn_blob_edges.clear() # Ensure clear on error
         except Exception as e:
             messagebox.showerror("Error", f"An error occurred during Blob preparation: {e}")
             print(f"Error preparing Blob: {e}")
             self.blob_running = False
-            self.current_np_graph = None # Clear stored graph on error
+            self.current_np_graph = None
+            self.step_count_var.set("Step: Error") # Indicate error
+            self.drawn_blob_edges.clear() # Ensure clear on error
 
-    # Make gui_step_callback accept an optional step_index
     def gui_step_callback(self, intermediate_blob_state, step_index=None):
-        """Puts intermediate blob state into the queue for GUI update."""
-        if self.blob_running:
-            # Optionally print step index if available
-            # if step_index is not None:
-            #     print(f"Step {step_index}")
-            self.blob_step_queue.put(intermediate_blob_state.copy())
-
-
-    def _check_blob_steps(self):
-        """Periodically checks the queue for intermediate blob results and updates canvas."""
+        """Directly updates the canvas to show the current blob step, minimizing flicker and scaling width by conductivity."""
         if not self.blob_running:
-            print("Blob step checking stopped.")
-            return
+            return # Stop if the run was cancelled
 
-        # Check if the queue object is valid before proceeding
-        if not isinstance(self.blob_step_queue, queue.Queue):
-            print("Error: blob_step_queue is not a valid Queue object! Stopping checks.")
-            self.blob_running = False
-            return
+        # Update step count label
+        if step_index is not None:
+            self.step_count_var.set(f"Step: {step_index}")
+        else:
+            self.step_count_var.set("Step: ?") # Fallback if index is missing
 
-        processed_step_in_cycle = False
-        try:
-            while True: # Loop until queue is empty for this check cycle
-                intermediate_blob_np = None
-                try:
-                    # Attempt to get an item from the queue
-                    intermediate_blob_np = self.blob_step_queue.get_nowait()
+        # --- Define colors and parameters ---
+        blob_edge_color = "#2ecc71" # Green for blob edges
+        # blob_edge_width = 3.0 # Width is now dynamic
+        threshold = 1e-6
 
-                except queue.Empty:
-                    # This is expected when the queue is empty, break the inner loop
-                    break
-                except Exception as e:
-                    # Catch any unexpected error during the get_nowait call itself
-                    print(f"Error during queue.get_nowait(): {e} (Type: {type(e)}). Stopping checks.")
-                    self.blob_running = False # Stop checking to prevent loops
-                    return # Exit the method
+        # --- Determine the set of edges and their conductivities ---
+        new_edges_data = {} # Maps edge tuple to conductivity
+        num_nodes = intermediate_blob_state.shape[0]
+        index_to_coord = self.current_index_to_coord
+        max_conductivity = threshold # Find max conductivity in this step for scaling
 
-                # --- Process the retrieved item ---
-                processed_step_in_cycle = True # Mark that we processed at least one item
+        if num_nodes == len(index_to_coord): # Check consistency
+            for i in range(num_nodes):
+                for j in range(i + 1, num_nodes):
+                    conductivity = intermediate_blob_state[i, j]
+                    if np.isfinite(conductivity) and conductivity > threshold:
+                        coord1 = index_to_coord.get(i)
+                        coord2 = index_to_coord.get(j)
+                        if coord1 and coord2:
+                            edge_tuple = tuple(sorted((coord1, coord2)))
+                            new_edges_data[edge_tuple] = conductivity
+                            if conductivity > max_conductivity:
+                                max_conductivity = conductivity
+        else:
+             print(f"Warning (Step Display): Matrix size ({num_nodes}) mismatch with mapping ({len(index_to_coord)}).")
 
-                # Check the type of the retrieved item
-                if not isinstance(intermediate_blob_np, np.ndarray):
-                    print(f"Warning: Got unexpected item type from queue: {type(intermediate_blob_np)}. Skipping.")
-                    continue # Skip this item and try the next
+        # --- Compare with currently drawn edges and update ---
+        current_edges_set = set(self.drawn_blob_edges.keys())
+        new_edges_set = set(new_edges_data.keys())
 
-                # Try processing the numpy array
-                try:
-                    # --- Displaying intermediate steps does NOT show weights ---
-                    # --- We only show weights for the FINAL result ---
-                    result_edges_coords_only = [] # Just coords for intermediate display
-                    num_nodes = intermediate_blob_np.shape[0]
-                    index_to_coord = self.current_index_to_coord
-                    if num_nodes != len(index_to_coord):
-                        print(f"Warning: Intermediate matrix size ({num_nodes}) doesn't match node mapping ({len(index_to_coord)}). Skipping step.")
-                        continue # Skip processing this item
+        # Edges to delete
+        edges_to_delete = current_edges_set - new_edges_set
+        for edge_tuple in edges_to_delete:
+            canvas_id = self.drawn_blob_edges.pop(edge_tuple, None)
+            if canvas_id:
+                self.canvas.delete(canvas_id)
 
-                    threshold = 1e-6
+        # Edges to add
+        edges_to_add = new_edges_set - current_edges_set
+        for edge_tuple in edges_to_add:
+            conductivity = new_edges_data[edge_tuple]
+            # Scale width: linear scaling relative to max_conductivity in this step
+            if max_conductivity > threshold:
+                width = MIN_BLOB_EDGE_WIDTH + (conductivity / max_conductivity) * (MAX_BLOB_EDGE_WIDTH - MIN_BLOB_EDGE_WIDTH)
+            else:
+                width = MIN_BLOB_EDGE_WIDTH
+            width = max(MIN_BLOB_EDGE_WIDTH, min(width, MAX_BLOB_EDGE_WIDTH)) # Clamp width
 
-                    for i in range(num_nodes):
-                        for j in range(i + 1, num_nodes):
-                            # Check for finite and above threshold *before* accessing coords
-                            if np.isfinite(intermediate_blob_np[i, j]) and intermediate_blob_np[i, j] > threshold:
-                                coord1 = index_to_coord.get(i)
-                                coord2 = index_to_coord.get(j)
-                                if coord1 and coord2: # Ensure coordinates were found
-                                    result_edges_coords_only.append((coord1, coord2))
+            coord1, coord2 = edge_tuple
+            r1, c1 = coord1
+            r2, c2 = coord2
+            x1 = c1 * self.cell_size + self.offset_x
+            y1 = r1 * self.cell_size + self.offset_y
+            x2 = c2 * self.cell_size + self.offset_x
+            y2 = r2 * self.cell_size + self.offset_y
+            line_id = self.canvas.create_line(
+                x1, y1, x2, y2,
+                fill=blob_edge_color,
+                width=width, # Use calculated width
+                tags="blob_edge"
+            )
+            self.drawn_blob_edges[edge_tuple] = line_id
 
-                    # Display the result for this step (without weights)
-                    self.display_blob_result(result_edges_coords_only) # Pass only coords
+        # Edges to potentially update (conductivity might have changed)
+        edges_to_update = current_edges_set & new_edges_set
+        for edge_tuple in edges_to_update:
+            canvas_id = self.drawn_blob_edges.get(edge_tuple)
+            if canvas_id:
+                conductivity = new_edges_data[edge_tuple]
+                # Scale width
+                if max_conductivity > threshold:
+                    width = MIN_BLOB_EDGE_WIDTH + (conductivity / max_conductivity) * (MAX_BLOB_EDGE_WIDTH - MIN_BLOB_EDGE_WIDTH)
+                else:
+                    width = MIN_BLOB_EDGE_WIDTH
+                width = max(MIN_BLOB_EDGE_WIDTH, min(width, MAX_BLOB_EDGE_WIDTH)) # Clamp width
 
-                except Exception as e:
-                    # Catch errors during the processing of the blob state data
-                    print(f"Error processing blob step data: {e}")
-                    # Continue to the next item in the queue
-                    continue
-                # --- End Processing ---
+                # Update existing line width
+                self.canvas.itemconfig(canvas_id, width=width)
 
-        except Exception as e:
-            # Catch any truly unexpected errors in the outer loop logic
-            print(f"Unexpected error in _check_blob_steps outer loop: {e}")
-            self.blob_running = False # Stop checking
 
-        # Schedule the next check only if still running
-        if self.blob_running:
-            # Adjust delay slightly if many steps were processed, otherwise keep 50ms
-            delay = 10 if processed_step_in_cycle else 50
-            self.master.after(delay, self._check_blob_steps)
+        # --- Ensure correct layering ---
+        self.canvas.tag_raise("node") # Nodes on top
+        if self.canvas.find_withtag("blob_edge"):
+            self.canvas.tag_raise("node", "blob_edge") # Nodes above blob edges
 
+        # Force canvas update - use update_idletasks for better responsiveness
+        self.canvas.update_idletasks()
+        # Add a pause
+        time.sleep(0.2)
 
     def _handle_blob_result(self, future):
         """Callback function to process the FINAL Blob result from the thread."""
         was_running = self.blob_running
         self.blob_running = False
-
-        while not self.blob_step_queue.empty():
-            try:
-                self.blob_step_queue.get_nowait()
-            except queue.Empty:
-                break
-        print("Cleared blob step queue.")
+        self.step_count_var.set("Step: Done") # Indicate completion
+        self.drawn_blob_edges.clear() # Clear tracking dict before final display
 
         if not was_running:
              print("Blob result received, but process was already stopped or finished.")
              self.current_np_graph = None # Clear stored graph
+             self.current_index_to_coord = {}
+             self.step_count_var.set("Step: -") # Reset if stopped early
              return
 
         try:
-            result_blob_np = future.result()
+            result_blob_np = future.result() # This might contain steps if MT, we ignore them here
+            # If result is tuple (blob, weight, steps), extract blob
+            if isinstance(result_blob_np, tuple) and len(result_blob_np) == 3:
+                final_blob_np = result_blob_np[0]
+            else: # Assume it's just the blob matrix (e.g., from MS3_PO)
+                final_blob_np = result_blob_np
+
             print("Blob algorithm finished. Displaying final result.")
 
-            result_edges_with_weights = [] # Now store (coord1, coord2, weight)
-            num_nodes = result_blob_np.shape[0]
+            # Store (coord1, coord2, original_weight, final_conductivity)
+            result_edges_with_weights_and_cond = []
+            num_nodes = final_blob_np.shape[0]
             index_to_coord = self.current_index_to_coord
-            original_graph = self.current_np_graph # Get the stored original graph
-            
+            original_graph = self.current_np_graph
+
             if original_graph is None:
-                print("Error: Original graph weights not found for displaying results.")
+                print("Error: Original graph weights not found for displaying final results.")
                 messagebox.showerror("Blob Error", "Internal error: Original graph weights missing.")
-                return # Cannot proceed without original weights
+                self.current_index_to_coord = {}
+                self.step_count_var.set("Step: Error")
+                return
 
             if num_nodes != len(index_to_coord):
                  print(f"Warning: Final matrix size ({num_nodes}) doesn't match node mapping ({len(index_to_coord)}).")
@@ -794,61 +818,72 @@ class GraphGUI:
 
 
             threshold = 1e-6
-            total_weight = 0.0 # Initialize total weight
+            total_weight = 0.0
 
             for i in range(num_nodes):
                 for j in range(i + 1, num_nodes):
+                    final_conductivity = final_blob_np[i, j]
                     # Check if edge exists in the FINAL blob result
-                    if np.isfinite(result_blob_np[i, j]) and result_blob_np[i, j] > threshold:
+                    if np.isfinite(final_conductivity) and final_conductivity > threshold:
                         coord1 = index_to_coord.get(i)
                         coord2 = index_to_coord.get(j)
+                        original_weight = None # Default if not found
                         # Also check if indices are valid in original graph
                         if coord1 and coord2 and i < original_graph.shape[0] and j < original_graph.shape[1]:
-                            original_weight = original_graph[i, j]
-                            if np.isfinite(original_weight): # Ensure original weight is valid
-                                result_edges_with_weights.append((coord1, coord2, original_weight))
+                            original_weight_val = original_graph[i, j]
+                            if np.isfinite(original_weight_val): # Ensure original weight is valid
+                                original_weight = original_weight_val
                                 total_weight += original_weight # Add weight to total
                             else:
                                 print(f"Warning: Edge ({i},{j}) in final blob but has non-finite weight in original graph. Skipping weight display.")
-                                result_edges_with_weights.append((coord1, coord2, None)) # Add edge but indicate no weight
                         elif coord1 and coord2:
                              print(f"Warning: Edge ({i},{j}) indices out of bounds for original graph. Skipping weight display.")
-                             result_edges_with_weights.append((coord1, coord2, None)) # Add edge but indicate no weight
 
-            print(f"Final Blob result: Found {len(result_edges_with_weights)} edges.")
-            print(f"Total weight of the final tree: {total_weight:.2f}") # Print the total weight
-            self.display_blob_result(result_edges_with_weights) # Pass edges with weights
+                        # Append tuple including final conductivity
+                        result_edges_with_weights_and_cond.append((coord1, coord2, original_weight, final_conductivity))
+
+
+            print(f"Final Blob result: Found {len(result_edges_with_weights_and_cond)} edges.")
+            print(f"Total weight of the final tree: {total_weight:.2f}")
+            # Pass the data including conductivity to the display function
+            self.display_blob_result(result_edges_with_weights_and_cond)
 
         except Exception as e:
             messagebox.showerror("Blob Error", f"Error executing or processing final Blob result: {e}")
             print(f"Error in Blob execution/callback: {e}")
+            self.step_count_var.set("Step: Error") # Indicate error
         finally:
             self.current_index_to_coord = {}
             self.current_np_graph = None # Clear stored graph
 
     def display_blob_result(self, edges_data):
-        """Draws the edges resulting from the Blob algorithm and their weights.
-           Accepts a list of tuples: (coord1, coord2) for intermediate steps (no weights),
-           or (coord1, coord2, weight) for the final result.
-        """
+        """Draws the FINAL edges resulting from the Blob algorithm, their weights, and scales width by conductivity."""
         self.canvas.delete("blob_edge")
-        self.canvas.delete("blob_weight") # Clear previous weights
+        self.canvas.delete("blob_weight")
+        self.drawn_blob_edges.clear() # Clear tracking dict for final display
         blob_edge_color = "#2ecc71" # Green
         blob_weight_color = "white"
-        blob_edge_width = 3.0
-        blob_weight_font = ("Arial", 8) # Smaller font for weights
+        # blob_edge_width = 3.0 # Width is now dynamic
+        blob_weight_font = ("Arial", 8)
 
         if not edges_data:
             return
 
+        # Find max conductivity in the final result for scaling
+        max_final_conductivity = 1e-6 # Use threshold as initial minimum
+        valid_conductivities = [data[3] for data in edges_data if len(data) == 4 and np.isfinite(data[3])]
+        if valid_conductivities:
+            max_final_conductivity = max(valid_conductivities)
+
         drawn_edges = set()
         for edge_info in edges_data:
             weight = None
-            if len(edge_info) == 3:
-                coord1, coord2, weight = edge_info
-            elif len(edge_info) == 2: # Intermediate step, no weight
-                coord1, coord2 = edge_info
+            final_cond = None
+            # Expecting (coord1, coord2, weight, final_conductivity)
+            if len(edge_info) == 4:
+                coord1, coord2, weight, final_cond = edge_info
             else:
+                print(f"Warning: Unexpected data format in display_blob_result: {edge_info}")
                 continue # Skip invalid data format
 
             edge_tuple = tuple(sorted((coord1, coord2)))
@@ -863,20 +898,26 @@ class GraphGUI:
                 x2 = c2 * self.cell_size + self.offset_x
                 y2 = r2 * self.cell_size + self.offset_y
 
-                # Draw the edge line
+                # Calculate width based on final conductivity
+                if final_cond is not None and np.isfinite(final_cond) and max_final_conductivity > 1e-6:
+                     width = MIN_BLOB_EDGE_WIDTH + (final_cond / max_final_conductivity) * (MAX_BLOB_EDGE_WIDTH - MIN_BLOB_EDGE_WIDTH)
+                else:
+                     width = MIN_BLOB_EDGE_WIDTH # Default or minimum width
+                width = max(MIN_BLOB_EDGE_WIDTH, min(width, MAX_BLOB_EDGE_WIDTH)) # Clamp width
+
+                # Draw line with calculated width
                 self.canvas.create_line(
                     x1, y1, x2, y2,
                     fill=blob_edge_color,
-                    width=blob_edge_width,
+                    width=width, # Use calculated width
                     tags="blob_edge"
                 )
                 drawn_edges.add(edge_tuple)
 
-                # Draw the weight text if available (only for final result)
+                # Draw weight text (if weight is valid)
                 if weight is not None and np.isfinite(weight):
                     mid_x = (x1 + x2) / 2
                     mid_y = (y1 + y2) / 2
-                    # Add small offset to avoid direct overlap with line if horizontal/vertical
                     offset_amount = 5
                     if abs(x1 - x2) < 1: # Vertical line
                         mid_x += offset_amount
@@ -891,16 +932,19 @@ class GraphGUI:
                         tags="blob_weight"
                     )
 
-
-        # Ensure nodes are on top, then weights, then edges
+        # Ensure correct layering for the final display
         self.canvas.tag_raise("node")
-        self.canvas.tag_raise("blob_weight", "blob_edge") # Raise weights above edges
-        self.canvas.tag_raise("node", "blob_weight") # Raise nodes above weights
+        if self.canvas.find_withtag("blob_weight"):
+            self.canvas.tag_raise("blob_weight", "blob_edge")
+            self.canvas.tag_raise("node", "blob_weight")
+        elif self.canvas.find_withtag("blob_edge"):
+             self.canvas.tag_raise("node", "blob_edge")
 
     def update_edges(self, event=None):
         self.canvas.delete("edge")
-        self.canvas.delete("blob_edge")
-        self.canvas.delete("blob_weight") # Clear weights when base edges change
+        self.canvas.delete("blob_edge") # Also delete blob edges if radius changes
+        self.canvas.delete("blob_weight")
+        self.drawn_blob_edges.clear() # Clear tracking dict
         radius = self.radius_var.get()
         node_coords = list(self.nodes.keys())
         edges_created = False
@@ -926,11 +970,9 @@ class GraphGUI:
         if self.blob_running:
             print("Clearing grid: Stopping active Blob process.")
             self.blob_running = False
-            self.current_np_graph = None # Clear stored graph if stopping run
+            self.current_np_graph = None
 
-        while not self.blob_step_queue.empty():
-            try: self.blob_step_queue.get_nowait()
-            except queue.Empty: break
+        # No blob_step_queue to clear
         while not self.mst_queue.empty():
             try: self.mst_queue.get_nowait()
             except queue.Empty: break
@@ -938,11 +980,12 @@ class GraphGUI:
         self.nodes.clear()
         self.terminals.clear()
         self.canvas.delete("blob_edge")
-        self.canvas.delete("blob_weight") # Clear weights on grid clear
+        self.canvas.delete("blob_weight")
+        self.drawn_blob_edges.clear() # Clear tracking dict
         self.draw_grid()
         self.update_edges()
         self.current_index_to_coord = {}
-        # self.current_np_graph is already cleared if blob was running, otherwise it should be None
+        self.step_count_var.set("Step: -") # Reset step count on clear
         print("Grid cleared.")
 
     def _select_nodes_from_chunk(self, coord_chunk, num_to_select):
@@ -989,10 +1032,9 @@ class GraphGUI:
             # If MST found and has edges, suggest radius based on max weight
             if max_mst_edge_weight > 0:
                 # Suggest the actual max weight, clamped only by MAX_RADIUS
-                suggested_radius = min(max_mst_edge_weight, float(MAX_RADIUS))
                 # Ensure a minimum practical radius (e.g., slightly above 0 if needed)
                 # Let's keep a minimum of 1.0 for practical grid connections.
-                return max(1.0, suggested_radius)
+                return max(1.0, min(max_mst_edge_weight, float(MAX_RADIUS)))
             else:
                 # If MST has no edges or max weight is 0 (e.g., single node after check), return 1.0
                 return 1.0

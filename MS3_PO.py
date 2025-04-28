@@ -9,7 +9,7 @@ from Fonctions.Initialisation import *
 from Fonctions.Puit import selectionPuit
 from Fonctions.Pression import calculNouvellesPressions
 from Fonctions.MiseAJour import miseAJour
-from Fonctions.Outils import *
+from Fonctions.Outils import poids # Ensure poids is imported
 
 
 def MSTbyPrim(graph_matrix: np.array, start_node_hint: int = 0) -> np.array:
@@ -116,7 +116,7 @@ def MS3_PO(Graphe: np.array, Terminaux: set[int], M: int = 1, K: int = 3000, alp
         modeRenfo (str): Mode de renforcement ('simple', 'vieillesse').
         display_result (bool): If True and step_callback is provided, calls step_callback.
         step_callback (callable, optional): Callback function called after each evolution step.
-                                             Receives (current_blob_state). Defaults to None.
+                                             Receives (current_blob_state, step_index). Defaults to None.
 
     Returns:
         np.array: Matrice d'adjacence de l'arbre de Steiner approximatif (MST du meilleur blob).
@@ -125,7 +125,7 @@ def MS3_PO(Graphe: np.array, Terminaux: set[int], M: int = 1, K: int = 3000, alp
     t_start = time.time() # Start timer
     n = np.shape(Graphe)[0]
     Pressions = np.array([])
-    meilleur_blob = Graphe.copy() # Initialize with Graphe structure but inf weights? Or empty? Let's keep Grappe.copy() for now.
+    meilleur_blob = None # Initialize meilleur_blob to None
     meilleur_poids = np.inf
 
     # Single-threaded version effectively runs only one simulation (M=1)
@@ -137,72 +137,87 @@ def MS3_PO(Graphe: np.array, Terminaux: set[int], M: int = 1, K: int = 3000, alp
 
         #INITIALISATION ---------------------------------------------------------------
         current_blob = initialisation(Graphe)
+        current_step_index = 0
+        # Initial callback call (step 0)
+        if display_result and step_callback is not None:
+            step_callback(current_blob.copy(), current_step_index)
 
         #ITERATION DE L'EVOLUTION DU BLOB ---------------------------------------------
         # Main evolution loop
         for j in range(K):
+            current_step_index = j + 1
             Puit = selectionPuit(Graphe, Terminaux, modeProba)
             Pressions = calculNouvellesPressions(Graphe, current_blob, Terminaux, Puit, débitEntrant, epsilon)
             miseAJour(Graphe, current_blob, j, Pressions, alpha, mu, delta, epsilon, modeRenfo)
 
-            # AFFICHAGE STEP BY STEP -----------------------------
-            # Call callback if display_result is True and callback exists
+            # AFFICHAGE STEP BY STEP (every 10 steps) -----------------------------
             if display_result and step_callback is not None:
-                step_callback(current_blob.copy()) # No step index passed
+                if current_step_index % 10 == 0: # Check if step index is a multiple of 10
+                    step_callback(current_blob.copy(), current_step_index)
 
 
         # --- Fin de la boucle K ---
-        # --- Choose a start node hint (e.g., the first terminal) ---
-        mst_start_node = next(iter(Terminaux)) if Terminaux else 0 # Pick first terminal, or 0 if no terminals
+        # --- Choose a start node hint ---
+        mst_start_node = next(iter(Terminaux)) if Terminaux else 0
         # ---------------------------------------------------------
 
-        # --- Calculer l'arbre couvrant maximal (MaxST) sur le blob actuel ---
-        mst_input_matrix = np.full_like(current_blob, np.inf) # Initialize with inf
-        finite_mask = np.isfinite(current_blob) # Find finite values
+        # --- Calculer l'arbre couvrant maximal (MaxST) ---
+        mst_input_matrix = np.full_like(current_blob, np.inf)
+        finite_mask = np.isfinite(current_blob)
+        current_step_index = K + 1 # Step index after K iterations
 
-        # Check if there are any finite values before proceeding
         if np.any(finite_mask):
             max_finite_conductivity = np.max(current_blob[finite_mask]) + 1
             mst_input_matrix[finite_mask] = max_finite_conductivity - current_blob[finite_mask]
             mst_sim_structure = MSTbyPrim(mst_input_matrix, start_node_hint=mst_start_node)
 
             deleted_edges_mask = np.isinf(mst_sim_structure)
-            current_blob[deleted_edges_mask] = np.inf # Set deleted edges to inf
+            current_blob[deleted_edges_mask] = np.inf
             tree_edges_mask = np.isfinite(mst_sim_structure)
-            # Ensure we only access valid indices if tree_edges_mask is not empty
             if np.any(tree_edges_mask):
-                 current_blob[tree_edges_mask] = max_finite_conductivity + 1 - mst_sim_structure[tree_edges_mask] # Set tree edges to their original values
-            # --- Fin du calcul MaxST ---
+                 current_blob[tree_edges_mask] = max_finite_conductivity + 1 - mst_sim_structure[tree_edges_mask]
+
+            # Callback after initial MST calculation (always show this step)
+            if display_result and step_callback is not None:
+                 step_callback(current_blob.copy(), current_step_index)
 
             # Refinement loop after MaxST
             for j in range(K // 3):
+                current_step_index = K + 1 + j + 1 # Step index during refinement
                 Puit = selectionPuit(Graphe, Terminaux, modeProba)
                 Pressions = calculNouvellesPressions(Graphe, current_blob, Terminaux, Puit, débitEntrant, epsilon)
-                # Pass correct iteration number (K + j) to miseAJour if it uses it internally
                 miseAJour(Graphe, current_blob, K + j, Pressions, alpha, mu, delta, epsilon, modeRenfo)
 
-                # AFFICHAGE STEP BY STEP -----------------------------
+                # AFFICHAGE STEP BY STEP (every 10 steps relative to the start of refinement)
                 if display_result and step_callback is not None:
-                    step_callback(current_blob.copy()) # No step index passed
+                    # Check if the refinement step number (j+1) is a multiple of 10
+                    if (j + 1) % 10 == 0:
+                        step_callback(current_blob.copy(), current_step_index)
         else:
-            # If no edges above epsilon after K steps, the blob is effectively empty for MST
             current_blob.fill(np.inf)
             print("Blob became empty after K steps. Skipping refinement.")
+            # Callback even if empty (always show this step)
+            if display_result and step_callback is not None:
+                 step_callback(current_blob.copy(), current_step_index)
 
 
-        # Update best blob found so far (only one iteration in this version)
+        # Update best blob found so far
         current_poids = poids(Graphe, current_blob)
-        if current_poids < meilleur_poids and current_poids > 0: # Ensure weight is valid
+        if np.isfinite(current_poids) and current_poids < meilleur_poids and current_poids > 0:
             meilleur_blob = current_blob.copy()
             meilleur_poids = current_poids
+        elif meilleur_blob is None and np.isfinite(current_poids) and current_poids > 0:
+             meilleur_blob = current_blob.copy()
+             meilleur_poids = current_poids
+
 
     # --- Fin de la boucle M (runs once) ---
     print(f"\nTemps total d'exécution : {time.time() - t_start:.2f} secondes")
 
     # Return the best blob found (which is the result of the single simulation)
-    if meilleur_poids != np.inf:
+    if meilleur_blob is not None and meilleur_poids != np.inf:
         print(f"Poids de l'arbre de Steiner final (MST) : {meilleur_poids}")
         return meilleur_blob
     else:
-        print("Aucune solution valide trouvée (poids infini). Retourne un graphe vide.")
+        print("Aucune solution valide trouvée (poids infini ou 0). Retourne un graphe vide.")
         return np.full_like(Graphe, np.inf)

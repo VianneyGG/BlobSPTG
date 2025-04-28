@@ -12,7 +12,7 @@ from Fonctions.Initialisation import *
 from Fonctions.Puit import selectionPuit
 from Fonctions.Pression import calculNouvellesPressions
 from Fonctions.MiseAJour import miseAJour
-from Fonctions.Outils import *
+from Fonctions.Outils import poids # Ensure poids is imported if not already
 from tqdm.auto import tqdm
 
 def MSTbyPrim(graph_matrix: np.array, start_node_hint: int = 0) -> np.array:
@@ -101,73 +101,80 @@ def MSTbyPrim(graph_matrix: np.array, start_node_hint: int = 0) -> np.array:
 
     return mst_matrix
 
-# Change function signature to accept individual arguments
-def run_single_blob_simulation(Graphe, Terminaux, K, alpha, mu, delta, epsilon, débitEntrant, modeProba, modeRenfo, display_result, step_callback, m_idx):
+# Change function signature: remove step_callback, add should_record_steps
+def run_single_blob_simulation(Graphe, Terminaux, K, alpha, mu, delta, epsilon, débitEntrant, modeProba, modeRenfo, should_record_steps, m_idx):
     """
-    Runs a single simulation instance (one iteration of the original M loop).
-    Designed to be called by multiprocessing.Pool.starmap.
+    Runs a single simulation instance. Returns intermediate steps if requested.
+    Steps are recorded as (step_index, blob_state).
     """
-
-    # Determine if this worker should display progress
-    should_display = display_result and m_idx == 0
+    # Store tuples: (step_index, blob_state)
+    intermediate_steps = [] if should_record_steps else None
 
     # INITIALISATION ---------------------------------------------------------------
     current_blob = initialisation(Graphe)
+    current_step_index = 0
+    if should_record_steps:
+        intermediate_steps.append((current_step_index, current_blob.copy())) # Record initial state (step 0)
 
     # ITERATION DE L'EVOLUTION DU BLOB ---------------------------------------------
     for j in range(K):
+        current_step_index = j + 1
         Puit = selectionPuit(Graphe, Terminaux, modeProba)
         Pressions = calculNouvellesPressions(Graphe, current_blob, Terminaux, Puit, débitEntrant, epsilon)
         miseAJour(Graphe, current_blob, j, Pressions, alpha, mu, delta, epsilon, modeRenfo)
 
-        # AFFICHAGE STEP BY STEP (Console/Matplotlib) - Only for worker 0
-        # Pass step index 'j' and check if callback exists
-        if should_display and step_callback is not None:
-            step_callback(current_blob.copy(), j) # Pass step index j
+        # Record step if needed (every 10 steps)
+        if should_record_steps:
+            if current_step_index % 10 == 0: # Check if step index is a multiple of 10
+                intermediate_steps.append((current_step_index, current_blob.copy()))
 
-    # --- Choose a start node hint (e.g., the first terminal) ---
+    # --- Choose a start node hint ---
     mst_start_node = next(iter(Terminaux)) if Terminaux else 0
+    current_step_index = K + 1 # Step index after K iterations
 
-    # --- Calculer l'arbre couvrant maximal (MaxST) sur le blob actuel ---
-    mst_input_matrix = np.full_like(current_blob, np.inf) # Initialize with inf
-    finite_mask = np.isfinite(current_blob) # Find finite values
+    # --- Calculer l'arbre couvrant maximal (MaxST) ---
+    mst_input_matrix = np.full_like(current_blob, np.inf)
+    finite_mask = np.isfinite(current_blob)
 
-    # Check if there are any finite values before proceeding
     if np.any(finite_mask):
         max_finite_conductivity = np.max(current_blob[finite_mask]) + 1
         mst_input_matrix[finite_mask] = max_finite_conductivity - current_blob[finite_mask]
         mst_sim_structure = MSTbyPrim(mst_input_matrix, start_node_hint=mst_start_node)
 
         deleted_edges_mask = np.isinf(mst_sim_structure)
-        current_blob[deleted_edges_mask] = np.inf # Set deleted edges to inf
+        current_blob[deleted_edges_mask] = np.inf
         tree_edges_mask = np.isfinite(mst_sim_structure)
-        # Ensure we only access valid indices if tree_edges_mask is not empty
         if np.any(tree_edges_mask):
-             current_blob[tree_edges_mask] = max_finite_conductivity + 1 - mst_sim_structure[tree_edges_mask] # Set tree edges to their original values
-        # --- Fin du calcul MaxST ---
+             current_blob[tree_edges_mask] = max_finite_conductivity + 1 - mst_sim_structure[tree_edges_mask]
+
+        # Record state after initial MST (always record this step)
+        if should_record_steps:
+            intermediate_steps.append((current_step_index, current_blob.copy()))
 
         # Refinement loop after MaxST
         for j in range(K // 3):
+            current_step_index = K + 1 + j + 1 # Step index during refinement
             Puit = selectionPuit(Graphe, Terminaux, modeProba)
-            # Ensure Pressures are calculated only on the MST structure
             Pressions = calculNouvellesPressions(Graphe, current_blob, Terminaux, Puit, débitEntrant, epsilon)
-            # Update only the edges remaining in current_blob (the MST edges)
-            # Pass correct iteration number (K + j) to miseAJour if it uses it internally
             miseAJour(Graphe, current_blob, K + j, Pressions, alpha, mu, delta, epsilon, modeRenfo)
 
-            # AFFICHAGE STEP BY STEP (Console/Matplotlib) - Only for worker 0
-            # Pass step index 'K + j' and check if callback exists
-            if should_display and step_callback is not None:
-                step_callback(current_blob.copy(), K + j) # Pass step index K + j
+            # Record refinement step if needed (every 10 steps relative to start of refinement)
+            if should_record_steps:
+                # Check if the refinement step number (j+1) is a multiple of 10
+                if (j + 1) % 10 == 0:
+                    intermediate_steps.append((current_step_index, current_blob.copy()))
     else:
-        # If no edges above epsilon after K steps, the blob is effectively empty for MST
         current_blob.fill(np.inf)
         print(f"Worker {m_idx}: Blob became empty after K steps. Skipping refinement.")
+        # Record empty state if needed (always record this step)
+        if should_record_steps:
+            intermediate_steps.append((current_step_index, current_blob.copy()))
 
     # Calculate the weight of the resulting blob/tree using original graph weights
     current_poids = poids(Graphe, current_blob)
 
-    return current_blob, current_poids
+    # Return final blob, weight, and the list of steps (or None)
+    return current_blob, current_poids, intermediate_steps
 
 def MS3_PO_MT(Graphe: np.array, Terminaux: set[int], M: int = 1, K: int = 3000, alpha: float = 0.15, mu: float = 1, delta: float = 0.2, epsilon: float = 1e-3, ksi: float = 1,  débitEntrant: float = 1, modeProba ='unif',modeRenfo='simple' , display_result: bool = True, step_callback=None) -> np.array:
     """
@@ -202,36 +209,54 @@ def MS3_PO_MT(Graphe: np.array, Terminaux: set[int], M: int = 1, K: int = 3000, 
     print(f"Lancement de {M} simulations sur {num_workers} coeurs...")
 
     # Prepare arguments for each parallel task
-    # Pass step_callback only if display_result is True (it will be used by worker 0)
-    callback_for_workers = step_callback if display_result else None
-    tasks_args = [(Graphe, Terminaux, K, alpha, mu, delta, epsilon, débitEntrant, modeProba, modeRenfo,
-                   display_result, # Pass display_result flag to all workers
-                   callback_for_workers, # Pass the actual callback function
-                   i)
-                  for i in range(M)]
+    tasks_args = []
+    for i in range(M):
+        should_record = display_result and i == 0 and step_callback is not None # Only record if display and callback exist
+        tasks_args.append(
+            (Graphe, Terminaux, K, alpha, mu, delta, epsilon, débitEntrant, modeProba, modeRenfo,
+             should_record,
+             i)
+        )
 
     results = []
+    recorded_steps = None # To store steps (tuples) from worker 0
+
     # Run simulations in parallel
     with Pool(processes=num_workers) as pool:
-        # Use tqdm for progress bar if desired, wrapping the starmap iterator
+        # results will be a list of tuples: (blob, poids, steps_list_or_None)
+        # steps_list_or_None contains tuples: (step_index, blob_state)
         results = list(tqdm(pool.starmap(run_single_blob_simulation, tasks_args), total=M, desc="Simulations Blob"))
 
-    # Find the best result among all simulations
+    # Process results: find best blob and extract steps from worker 0
     meilleur_blob = None
     meilleur_poids = np.inf
+    all_weights = []
 
-    for blob, poids_blob in results:
+    for i, (blob, poids_blob, steps) in enumerate(results):
+        all_weights.append(float(poids_blob) if np.isfinite(poids_blob) else float('inf'))
         if poids_blob < meilleur_poids and poids_blob > 0:
             meilleur_poids = poids_blob
             meilleur_blob = blob
+        if i == 0 and steps is not None: # Check if this is worker 0's result and steps were recorded
+            recorded_steps = steps
+
+    # If steps were recorded and a callback exists, execute the callback for each recorded step
+    if recorded_steps and step_callback:
+        print(f"Processing {len(recorded_steps)} recorded steps for display...")
+        for original_step_index, step_data in recorded_steps: # Unpack the tuple
+            step_callback(step_data, original_step_index) # Pass original index to GUI
+        print("Finished processing steps.")
+
 
     print(f"\nTemps total d'exécution : {time.time() - t_start:.2f} secondes")
-    print([float(results[i][1]) for i in range(M)])
+    # print(all_weights)
 
-    # Final MST calculation on the best blob found
+    # Return the best blob found
     if meilleur_blob is not None and meilleur_poids != np.inf:
         print(f"Poids de l'arbre de Steiner final (MST) : {meilleur_poids}")
-        return meilleur_blob
+        # Return the best blob AND its weight, and the recorded steps (for potential future use, though GUI handles it now)
+        return meilleur_blob #, meilleur_poids, recorded_steps # Modified return for consistency? Let's stick to just blob for now as GUI expects.
     else:
         print("Aucune solution valide trouvée après M simulations. Retourne un graphe vide.")
-        return np.full_like(Graphe, np.inf)
+        # Return an empty graph AND infinity weight, and recorded steps
+        return np.full_like(Graphe, np.inf) #, np.inf, recorded_steps
