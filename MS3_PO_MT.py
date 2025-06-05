@@ -5,7 +5,7 @@ from math import *
 import time as t
 import numpy as np
 import matplotlib.pyplot as plt
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool, cpu_count, Lock, Manager
 import networkx as nx
 
 from Fonctions.Initialisation import *
@@ -14,6 +14,7 @@ from Fonctions.Pression import calculNouvellesPressions
 from Fonctions.Update import miseAJour
 from Fonctions.Tools import poids # Ensure poids is imported if not already
 from tqdm.auto import tqdm
+from multiprocessing import Pool, cpu_count
 
 def MSTbyPrim(graph_matrix: np.array, start_node_hint: int = 0) -> np.array:
     """
@@ -102,16 +103,38 @@ def MSTbyPrim(graph_matrix: np.array, start_node_hint: int = 0) -> np.array:
     return mst_matrix
 
 # Change function signature: remove step_callback, add should_record_steps
-def run_single_blob_simulation(Graphe, Terminaux, K, alpha, mu, delta, epsilon, débitEntrant, modeProba, modeRenfo, should_record_steps, m_idx):
+def run_single_blob_simulation(Graphe, Terminaux, K, alpha, mu, delta, epsilon, débitEntrant, modeProba, modeRenfo, should_record_steps, m_idx, initial_blob=None):
     """
     Runs a single simulation instance. Returns intermediate steps if requested.
     Steps are recorded as (step_index, blob_state).
+    Optionally starts from an initial blob (conductivity matrix).
+
+    Args:
+        Graphe (np.array): Matrice d'adjacence pondérée du graphe initial (coûts).
+        Terminaux (set[int]): Ensemble des indices des nœuds terminaux.
+        K (int): Nombre d'itérations de l'évolution du Blob dans chaque simulation.
+        alpha (float): Paramètre de la loi de renforcement.
+        mu (float): Paramètre de la loi de renforcement.
+        delta (float): Paramètre de la loi de renforcement.
+        epsilon (float): Conductivité minimale des arêtes considérées.
+        débitEntrant (float): Débit entrant pour le calcul des pressions.
+        modeProba (str): Mode de sélection du puits ('unif', etc.).
+        modeRenfo (str): Mode de renforcement ('simple', 'vieillesse').
+        should_record_steps (bool): Si True, enregistre les étapes intermédiaires.
+        m_idx (int): Index du worker (pour le débogage).
+        initial_blob (np.array, optional): Matrice de conductivité initiale pour démarrer la simulation.
+
+    Returns:
+        np.array: Le blob final (matrice d'adjacence de l'arbre de Steiner approximatif).
+                  Peut être rempli de np.inf si aucune solution valide n'est trouvée.
     """
-    # Store tuples: (step_index, blob_state)
     intermediate_steps = [] if should_record_steps else None
 
     # INITIALISATION ---------------------------------------------------------------
-    current_blob = initialisation(Graphe)
+    if initial_blob is not None:
+        current_blob = initial_blob.copy()
+    else:
+        current_blob = initialisation(Graphe)
     current_step_index = 0
     if should_record_steps:
         intermediate_steps.append((current_step_index, current_blob.copy())) # Record initial state (step 0)
@@ -122,16 +145,13 @@ def run_single_blob_simulation(Graphe, Terminaux, K, alpha, mu, delta, epsilon, 
         Puit = selectionPuit(Graphe, Terminaux, modeProba)
         Pressions = calculNouvellesPressions(Graphe, current_blob, Terminaux, Puit, débitEntrant, epsilon)
         miseAJour(Graphe, current_blob, j, Pressions, alpha, mu, delta, epsilon, modeRenfo)
-
-        # Record step if needed (every 10 steps)
         if should_record_steps:
-            if current_step_index % 10 == 0: # Check if step index is a multiple of 10
+            if current_step_index % 10 == 0:
                 intermediate_steps.append((current_step_index, current_blob.copy()))
 
     # --- Choose a start node hint ---
     mst_start_node = next(iter(Terminaux)) if Terminaux else 0
-    current_step_index = K + 1 # Step index after K iterations
-
+    current_step_index = K + 1
     # --- Calculer l'arbre couvrant maximal (MaxST) ---
     mst_input_matrix = np.full_like(current_blob, np.inf)
     finite_mask = np.isfinite(current_blob)
@@ -176,7 +196,7 @@ def run_single_blob_simulation(Graphe, Terminaux, K, alpha, mu, delta, epsilon, 
     # Return final blob, weight, and the list of steps (or None)
     return current_blob, current_poids, intermediate_steps
 
-def MS3_PO_MT(Graphe: np.array, Terminaux: set[int], M: int = 1, K: int = 3000, alpha: float = 0.15, mu: float = 1, delta: float = 0.2, epsilon: float = 1e-3, ksi: float = 1,  débitEntrant: float = 1, modeProba ='unif',modeRenfo='simple' , display_result: bool = True, step_callback=None) -> np.array:
+def MS3_PO_MT(Graphe: np.array, Terminaux: set[int], M: int = 1, K: int = 3000, alpha: float = 0.15, mu: float = 1, delta: float = 0.2, epsilon: float = 1e-3, débitEntrant: float = 1, modeProba ='unif',modeRenfo='simple' , display_result: bool = True, step_callback=None) -> np.array:
     """
     Itère M fois l'algorithme du Blob en parallèle pour le probleme de l'arbre de Steiner.
 
@@ -206,7 +226,7 @@ def MS3_PO_MT(Graphe: np.array, Terminaux: set[int], M: int = 1, K: int = 3000, 
 
     # Determine number of workers
     num_workers = min(M, cpu_count()) # Use at most M workers, limited by CPU cores
-    print(f"Lancement de {M} simulations sur {num_workers} coeurs...")
+    #print(f"Lancement de {M} simulations sur {num_workers} coeurs...")
 
     # Prepare arguments for each parallel task
     tasks_args = []
@@ -225,7 +245,7 @@ def MS3_PO_MT(Graphe: np.array, Terminaux: set[int], M: int = 1, K: int = 3000, 
     with Pool(processes=num_workers) as pool:
         # results will be a list of tuples: (blob, poids, steps_list_or_None)
         # steps_list_or_None contains tuples: (step_index, blob_state)
-        results = list(tqdm(pool.starmap(run_single_blob_simulation, tasks_args), total=M, desc="Simulations Blob"))
+        results = list(tqdm(pool.starmap(run_single_blob_simulation, tasks_args), total=M))
 
     # Process results: find best blob and extract steps from worker 0
     meilleur_blob = None
@@ -248,15 +268,82 @@ def MS3_PO_MT(Graphe: np.array, Terminaux: set[int], M: int = 1, K: int = 3000, 
         print("Finished processing steps.")
 
 
-    print(f"\nTemps total d'exécution : {time.time() - t_start:.2f} secondes")
+    #print(f"\nTemps total d'exécution : {time.time() - t_start:.2f} secondes")
     # print(all_weights)
 
     # Return the best blob found
     if meilleur_blob is not None and meilleur_poids != np.inf:
-        print(f"Poids de l'arbre de Steiner final (MST) : {meilleur_poids}")
+        #print(f"Poids de l'arbre de Steiner final (MST) : {meilleur_poids}")
         # Return the best blob AND its weight, and the recorded steps (for potential future use, though GUI handles it now)
         return meilleur_blob #, meilleur_poids, recorded_steps # Modified return for consistency? Let's stick to just blob for now as GUI expects.
     else:
-        print("Aucune solution valide trouvée après M simulations. Retourne un graphe vide.")
+        #print("Aucune solution valide trouvée après M simulations. Retourne un graphe vide.")
         # Return an empty graph AND infinity weight, and recorded steps
         return np.full_like(Graphe, np.inf) #, np.inf, recorded_steps
+
+def run_sim_with_init(args):
+    # Unpack all arguments, including should_record and m_idx
+    (Graphe, Terminaux, K, alpha, mu, delta, epsilon, débitEntrant, modeProba, modeRenfo, should_record, m_idx, initial_blob) = args
+    return run_single_blob_simulation(Graphe, Terminaux, K, alpha, mu, delta, epsilon, débitEntrant, modeProba, modeRenfo, should_record, m_idx, initial_blob=initial_blob)
+
+def MS3_PO_MT_EVOL(Graphe: np.array, Terminaux: set[int], M: int = 1, K: int = 3000, alpha: float = 0.15, mu: float = 1, delta: float = 0.2, epsilon: float = 1e-3, S: int = 5, débitEntrant: float = 1, modeProba ='unif',modeRenfo='simple', display_result: bool = True, step_callback=None) -> np.array:
+    """
+    MS3-PO-MT with evolutionary update (outer loop) as in the article.
+    S: number of outer evolutionary loops (each does M parallel runs and then updates conductivities).
+    """
+    n = np.shape(Graphe)[0]
+    best_blob = np.full_like(Graphe, np.inf)
+    best_weight = np.inf
+    current_conductivity = initialisation(Graphe)
+    best_steps = None
+
+    for outer in range(S):
+        args_list = []
+        for i in range(M):
+            should_record = display_result and i == 0 and step_callback is not None
+            args_list.append((Graphe, Terminaux, K, alpha, mu, delta, epsilon, débitEntrant, modeProba, modeRenfo, should_record, i, current_conductivity))
+        with Pool(processes=min(M, cpu_count())) as pool:
+            results = pool.map(run_sim_with_init, args_list)
+        blobs = [r for r in results]
+        # If should_record, extract steps from worker 0
+        if display_result and step_callback is not None and hasattr(results[0], '__len__') and len(results[0]) == 3:
+            _, _, steps = results[0]
+            best_steps = steps
+        else:
+            steps = None
+        # Find the best blob in this batch
+        weights = [poids(Graphe, r[0] if hasattr(r, '__len__') and len(r) > 0 else r) for r in results]
+        idx_best = int(np.argmin(weights))
+        if weights[idx_best] < best_weight and weights[idx_best] > 0:
+            best_weight = weights[idx_best]
+            best_blob = results[idx_best][0] if hasattr(results[idx_best], '__len__') and len(results[idx_best]) > 0 else results[idx_best].copy()
+        # Evolutionary update: update conductivities
+        in_best = (best_blob != np.inf)
+        for i in range(n):
+            for j in range(n):
+                if Graphe[i, j] == np.inf:
+                    continue
+                Dij = current_conductivity[i, j]
+                Qij = 1.0  # Placeholder: you may want to use actual flow if available
+                base_update = Dij + alpha * abs(Qij) - mu * Dij
+                if in_best[i, j]:
+                    current_conductivity[i, j] = (1 + delta) * base_update
+                else:
+                    current_conductivity[i, j] = (1 - delta) * base_update
+                if current_conductivity[i, j] < epsilon:
+                    current_conductivity[i, j] = np.inf
+    # If steps were recorded and a callback exists, execute the callback for each recorded step
+    if best_steps and step_callback:
+        print(f"Processing {len(best_steps)} recorded steps for display...")
+        for original_step_index, step_data in best_steps:
+            step_callback(step_data, original_step_index)
+        print("Finished processing steps.")
+    return best_blob
+
+__all__ = [
+    'MSTbyPrim',
+    'run_single_blob_simulation',
+    'MS3_PO_MT',
+    'run_sim_with_init',
+    'MS3_PO_MT_EVOL',
+]

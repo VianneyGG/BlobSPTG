@@ -98,7 +98,7 @@ def MSTbyPrim(graph_matrix: np.array, start_node_hint: int = 0) -> np.array:
 
     return mst_matrix
 
-def MS3_PO(Graphe: np.array, Terminaux: set[int], M: int = 1, K: int = 3000, alpha: float = 0.15, mu: float = 1, delta: float = 0.2, epsilon: float = 1e-3, ksi: float = 1,  débitEntrant: float = 1, modeProba ='unif',modeRenfo='simple' , display_result: bool = True, step_callback=None) -> np.array:
+def MS3_PO(Graphe: np.array, Terminaux: set[int], M: int = 1, K: int = 3000, alpha: float = 0.15, mu: float = 1, delta: float = 0.2, epsilon: float = 1e-3, débitEntrant: float = 1, modeProba ='unif',modeRenfo='simple' , display_result: bool = True, step_callback=None) -> np.array:
     """itère M fois l'algorithme du Blob pour le probleme de l'arbre de Steiner
     
     Args:

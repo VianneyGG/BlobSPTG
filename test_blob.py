@@ -12,7 +12,7 @@ import functools # Import functools
 
 # Assuming Blobv3.py and Fonctions are accessible
 from MS3_PO import MS3_PO
-from MS3_PO_MT import MS3_PO_MT# Import Blob and potentially poids if needed by Blobv3
+from MS3_PO_MT import MS3_PO_MT_EVOL# Import Blob and potentially poids if needed by Blobv3
 from Fonctions.Tools import nx2np # Import the conversion utility
 
 # --- Global variables for callback counter and plot ---
@@ -147,7 +147,7 @@ if __name__ == "__main__":
                                      all_nodes=all_node_indices)
 
     # 5. Call Blob function
-    final_blob = MS3_PO_MT( # This now returns the MST of the best blob
+    final_blob = MS3_PO_MT_EVOL( # This now returns the MST of the best blob
         Graphe=sample_graph.copy(),
         Terminaux=terminals,
         M=M_test,
