@@ -18,7 +18,7 @@ import time # Import time for potential small delays if needed
 try:
     from MS3_PO import MS3_PO
     from MS3_PO_MT import MS3_PO_MT# Updated import
-    from Fonctions.Outils import nx2np
+    from Fonctions.Tools import nx2np
 except ImportError as e:
     messagebox.showerror("Import Error", f"Could not import Blob algorithm components: {e}\nMake sure Blobv3.py and Fonctions directory are accessible.")
 

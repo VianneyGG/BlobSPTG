@@ -9,10 +9,10 @@ from multiprocessing import Pool, cpu_count
 import networkx as nx
 
 from Fonctions.Initialisation import *
-from Fonctions.Puit import selectionPuit
+from Fonctions.Sink import selectionPuit
 from Fonctions.Pression import calculNouvellesPressions
-from Fonctions.MiseAJour import miseAJour
-from Fonctions.Outils import poids # Ensure poids is imported if not already
+from Fonctions.Update import miseAJour
+from Fonctions.Tools import poids # Ensure poids is imported if not already
 from tqdm.auto import tqdm
 
 def MSTbyPrim(graph_matrix: np.array, start_node_hint: int = 0) -> np.array:
