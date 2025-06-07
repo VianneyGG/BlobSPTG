@@ -42,7 +42,7 @@ SMT = {
               11: 34.0, 12: 67.0, 13: 1280.0, 14: 1732.0, 15: 2784.0, 16: 15.0, 17: 25.0, 18: 564.0, 19: 758.0, 20: 1342.0}
 }
 
-if __name__ == '__main__':
+def tests (M:int, K:int, alpha=0.15, mu=1, delta=0.1, S=3, evol=False, modeRenfo='vieillesse', modeProba='weighted'):
     results = []
     test_folder = os.path.join(os.path.dirname(__file__), 'tests')
     # Loop through X in 'b' to 'e' and Y in 1 to 20 (to 18 for 'b')
@@ -58,15 +58,15 @@ if __name__ == '__main__':
                 G = build_graph(n_vertices, edges)
                 # Run MS3_PO_MT_EVOL
                 blob = MS3_PO_MT(G, set([t-1 for t in terminals]),
-                                 M=33,
-                                 K=1000,
-                                 alpha=0.15,
-                                 mu=1,
-                                 delta=0.1,
-                                 S=3,
-                                 évol=True,
-                                 modeRenfo='vieillesse',
-                                 modeProba='weighted')
+                                M=M,
+                                K=K,
+                                alpha=alpha,
+                                mu=mu,
+                                delta=delta,
+                                S=S,
+                                évol=evol,
+                                modeRenfo=modeRenfo,
+                                modeProba=modeProba)
                 mask = np.isfinite(blob)
                 blob_weight = np.sum(G[mask])/2
                 # Compute SMT (approximate)
