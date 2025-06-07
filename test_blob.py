@@ -12,7 +12,7 @@ import functools # Import functools
 
 # Assuming Blobv3.py and Fonctions are accessible
 from MS3_PO import MS3_PO
-from MS3_PO_MT import MS3_PO_MT_EVOL# Import Blob and potentially poids if needed by Blobv3
+from MS3_PO_MT import MS3_PO_MT# Import Blob and potentially poids if needed by Blobv3
 from Fonctions.Tools import nx2np # Import the conversion utility
 
 # --- Global variables for callback counter and plot ---
@@ -81,61 +81,68 @@ def matplotlib_callback(blob_state, step_index, base_pos, terminal_nodes, all_no
     plt.pause(0.5) # Pause for 0.5 seconds to update the plot
 
 
+# Helper to parse a steinX.txt file (copied from test_evol_vs_smt.py)
+def parse_stein_file(filepath):
+    with open(filepath, 'r') as f:
+        lines = [line.strip() for line in f if line.strip()]
+    n_vertices, n_edges = map(int, lines[0].split())
+    edge_lines = lines[1:1+n_edges]
+    edges = []
+    for line in edge_lines:
+        u, v, cost = map(int, line.split())
+        edges.append((u, v, cost))
+    n_terminals = int(lines[1+n_edges])
+    # Read terminals from all remaining lines
+    terminal_lines = lines[2+n_edges:]
+    terminals = []
+    for line in terminal_lines:
+        terminals.extend(map(int, line.split()))
+    return n_vertices, n_edges, edges, terminals
+
+# Build adjacency matrix from edge list
+def build_graph(n_vertices, edges):
+    G = np.full((n_vertices, n_vertices), np.inf)
+    for u, v, cost in edges:
+        G[u-1, v-1] = cost
+        G[v-1, u-1] = cost
+    return G
+
 # --- Main Test Logic ---
 if __name__ == "__main__":
 
-    print("--- Testing Blob Function with Grid Graph and Matplotlib Viz ---")
+    print("--- Testing Blob Function with steinb1 Graph and Matplotlib Viz ---")
 
-    # 1. Create Grid Graph
-    grid_n = 12 # Number of rows - Check if this matches the expected 25 nodes? If 5x5 -> 25 nodes.
-    grid_p = 12 # Number of columns
-    num_total_nodes = grid_n * grid_p
-    print(f"Creating a {grid_n}x{grid_p} grid graph ({num_total_nodes} nodes).")
-
-    g_nx = nx.grid_2d_graph(grid_n, grid_p)
-
-    # Create positions dictionary (mapping node ID to coordinates)
-    # Node (r, c) -> position [c, grid_n - 1 - r] for standard plot orientation
-    pos_tuples = {(r, c): np.array([c, grid_n - 1 - r]) for r in range(grid_n) for c in range(grid_p)}
-
-    # Relabel nodes from (r,c) tuples to integers 0 to N-1
-    node_mapping = {(r, c): r * grid_p + c for r in range(grid_n) for c in range(grid_p)}
-    g_nx_relabeled = nx.relabel_nodes(g_nx, node_mapping, copy=True)
-
-    # Define context locally
-    pos = {node_mapping[old_node]: pos_tuples[old_node] for old_node in pos_tuples}
-    all_node_indices = list(g_nx_relabeled.nodes())
-
-    # Add weights (distances) to edges for the NumPy conversion
-    for u, v in g_nx_relabeled.edges():
-        p1 = pos[u]
-        p2 = pos[v]
-        distance = math.sqrt(((p1 - p2)**2).sum())
-        g_nx_relabeled.edges[u, v]['weight'] = distance
-
-    # Convert to NumPy adjacency matrix
-    sample_graph = nx2np(g_nx_relabeled) # Use the relabeled graph
-    if sample_graph.shape[0] != num_total_nodes:
-        print(f"Warning: nx2np output shape {sample_graph.shape} mismatch with expected {num_total_nodes}")
-
-    # 2. Define Terminals (Randomly)
-    num_terminals = 5
-    if num_terminals > num_total_nodes:
-        num_terminals = num_total_nodes
-    # Define terminals locally
-    terminals = set(random.sample(all_node_indices, num_terminals))
-    print(f"Terminals (randomly selected): {terminals}")
-
-    # 3. Set parameters
-    M_test = 10
-    K_test = 400 # Number of steps for visualization
-    alpha_test = 0.7
+    # 1. Load steinb1 Graph
+    steinb1_path = os.path.join(os.path.dirname(__file__), 'tests', 'steinb1.txt')
+    n_vertices, n_edges, edges, terminals_list = parse_stein_file(steinb1_path)
+    
+    print(f"Loaded steinb1: {n_vertices} vertices, {n_edges} edges")
+    print(f"Terminals: {terminals_list}")
+    
+    # Convert to adjacency matrix
+    sample_graph = build_graph(n_vertices, edges)
+    
+    # Create NetworkX graph for visualization
+    g_nx = nx.Graph()
+    g_nx.add_nodes_from(range(n_vertices))
+    for u, v, cost in edges:
+        g_nx.add_edge(u-1, v-1, weight=cost)
+    
+    # Generate positions using spring layout for better visualization
+    pos = nx.spring_layout(g_nx, seed=42, k=3, iterations=50)
+    all_node_indices = list(range(n_vertices))
+    
+    # Convert terminals from 1-indexed to 0-indexed
+    terminals = set([t-1 for t in terminals_list])
+    print(f"Terminals (0-indexed): {terminals}")    # 3. Set parameters
+    M_test = 20
+    K_test = 500 # Reduced for faster visualization
+    alpha_test = 0.111
     mu_test = 1.0
     delta_test = 0.2
     epsilon_test = 1e-5
 
-    print(f"Running Blob with M={M_test}, K={K_test}...")
-
+    print(f"Running Blob with M={M_test}, K={K_test} on steinb1 graph...")
 
     # 4. Prepare Matplotlib and Callback using functools.partial
     plt.ion()
@@ -147,7 +154,7 @@ if __name__ == "__main__":
                                      all_nodes=all_node_indices)
 
     # 5. Call Blob function
-    final_blob = MS3_PO_MT_EVOL( # This now returns the MST of the best blob
+    final_blob = MS3_PO_MT( # This now returns the MST of the best blob
         Graphe=sample_graph.copy(),
         Terminaux=terminals,
         M=M_test,
@@ -156,17 +163,31 @@ if __name__ == "__main__":
         mu=mu_test,
         delta=delta_test,
         epsilon=epsilon_test,
+        évol=True,
         display_result=True, # Use our callback for display
         step_callback=viz_callback, # Pass the partial object
         modeRenfo='vieillesse'
     )
-
-
     # 6. Final Plot and Results
     plt.ioff() # Turn off interactive mode
     print("\n--- Blob Function Test Result ---")
     if final_blob is not None:
         print(f"Returned MST Matrix Shape: {final_blob.shape}") # Changed print statement
+        
+        # Calculate blob weight using original graph weights where blob is finite
+        mask = np.isfinite(final_blob)
+        blob_weight = np.sum(sample_graph[mask])/2
+        print(f"Blob weight: {blob_weight:.2f}")
+        
+        # Calculate NetworkX Steiner tree weight for comparison
+        nx_steiner_weight = 0
+        try:
+            steiner_tree = nx.algorithms.approximation.steiner_tree(g_nx, terminals, weight='weight')
+            nx_steiner_weight = sum(d['weight'] for _, _, d in steiner_tree.edges(data=True))
+            print(f"NetworkX Steiner tree weight: {nx_steiner_weight:.2f}")
+            print(f"Difference (Blob - NetworkX): {blob_weight - nx_steiner_weight:.2f}")
+        except Exception as e:
+            print(f"Error calculating NetworkX Steiner tree: {e}")
 
         # Visualize the final MST
         plt.clf() # Clear the figure used for steps
@@ -188,8 +209,7 @@ if __name__ == "__main__":
         # Draw all nodes (use local all_node_indices, pos)
         nx.draw_networkx_nodes(all_node_indices, pos, node_size=20, node_color='lightblue', alpha=0.8)
         # Draw terminal nodes (use local terminals, pos)
-        nx.draw_networkx_nodes(terminals, pos, node_size=50, node_color='red')
-        # Draw MST edges
+        nx.draw_networkx_nodes(terminals, pos, node_size=50, node_color='red')        # Draw MST edges
         if mst_edges:
             mst_graph_viz = nx.Graph()
             mst_graph_viz.add_nodes_from(all_node_indices)
@@ -197,8 +217,8 @@ if __name__ == "__main__":
             nx.draw_networkx_edges(mst_graph_viz, pos, edgelist=mst_edges, edge_color='blue', width=2.5)
             # Draw MST edge labels (optional)
             nx.draw_networkx_edge_labels(mst_graph_viz, pos, edge_labels=mst_edge_labels, font_size=7, font_color='darkblue')
-
-        plt.title(f"Final MST Result (After {K_test + K_test//3} Blob steps)")
+        
+        plt.title(f"Final MST Result - steinb1 (After {K_test} Blob steps)")
         plt.xlabel("X coordinate")
         plt.ylabel("Y coordinate")
         plt.axis('equal')
@@ -209,4 +229,4 @@ if __name__ == "__main__":
         print("Blob function returned None.")
         plt.show() # Show empty plot if needed
 
-    print("\n--- Test Complete ---")
+    print("\n--- steinb1 Test Complete ---")
